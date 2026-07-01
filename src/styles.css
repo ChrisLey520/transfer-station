@@ -924,6 +924,27 @@ code {
   font-size: 12px;
 }
 
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pagination-bar > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pagination-bar strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
 .search-bar input {
   border: 0;
   padding: 0;
@@ -1069,6 +1090,7 @@ code {
 
 .empty-state {
   display: grid;
+  gap: 12px;
   min-height: 90px;
   place-items: center;
   color: var(--muted);
@@ -1170,6 +1192,12 @@ code {
 
   .modal-actions {
     flex-direction: column-reverse;
+  }
+
+  .pagination-bar,
+  .pagination-bar > div {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .wide-field {

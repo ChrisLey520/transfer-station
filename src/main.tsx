@@ -90,6 +90,9 @@ type UsageLog = {
   createdAt: string;
 };
 
+type LogRange = '24h' | '3d' | '7d' | '30d';
+type LogStatus = 'all' | 'success' | 'failed';
+
 type Summary = {
   totalTokens: number;
   inputTokens: number;
@@ -115,7 +118,13 @@ type Bootstrap = {
   summary: Summary;
   plans: Plan[];
   keys: ApiKey[];
+};
+
+type LogPage = {
   logs: UsageLog[];
+  total: number;
+  page: number;
+  pageSize: number;
 };
 
 const dictionary = {
@@ -153,9 +162,17 @@ const dictionary = {
     allStatuses: '全部状态',
     successOnly: '仅成功',
     failedOnly: '仅失败',
+    allKeys: '全部密钥',
+    logKey: '密钥',
+    timeRange: '时间范围',
+    last24Hours: '最近 24 小时',
+    last3Days: '最近 3 天',
+    last7Days: '最近 7 天',
+    last30Days: '最近 30 天',
+    previousPage: '上一页',
+    nextPage: '下一页',
+    logTotal: '共 {total} 条',
     requestTime: '请求时间',
-    fromTime: '开始时间',
-    toTime: '结束时间',
     cacheCreation: '创建缓存',
     cacheHit: '命中缓存',
     failureReason: '失败描述',
@@ -181,6 +198,7 @@ const dictionary = {
     confirmImport: '确认导入',
     cancel: '取消',
     copiedSecret: '密钥已复制',
+    createdKeySuccess: '密钥创建成功',
     deleteConfirm: '确认删除这个密钥？',
     useWithCodex: '导入 Codex',
     useWithClaude: '导入 Claude Code',
@@ -250,9 +268,17 @@ const dictionary = {
     allStatuses: '全部狀態',
     successOnly: '僅成功',
     failedOnly: '僅失敗',
+    allKeys: '全部金鑰',
+    logKey: '金鑰',
+    timeRange: '時間範圍',
+    last24Hours: '最近 24 小時',
+    last3Days: '最近 3 天',
+    last7Days: '最近 7 天',
+    last30Days: '最近 30 天',
+    previousPage: '上一頁',
+    nextPage: '下一頁',
+    logTotal: '共 {total} 筆',
     requestTime: '請求時間',
-    fromTime: '開始時間',
-    toTime: '結束時間',
     cacheCreation: '建立快取',
     cacheHit: '命中快取',
     failureReason: '失敗描述',
@@ -278,6 +304,7 @@ const dictionary = {
     confirmImport: '確認匯入',
     cancel: '取消',
     copiedSecret: '金鑰已複製',
+    createdKeySuccess: '金鑰建立成功',
     deleteConfirm: '確認刪除這個金鑰？',
     useWithCodex: '匯入 Codex',
     useWithClaude: '匯入 Claude Code',
@@ -347,9 +374,17 @@ const dictionary = {
     allStatuses: 'All statuses',
     successOnly: 'Success only',
     failedOnly: 'Failed only',
+    allKeys: 'All keys',
+    logKey: 'Key',
+    timeRange: 'Time range',
+    last24Hours: 'Last 24 hours',
+    last3Days: 'Last 3 days',
+    last7Days: 'Last 7 days',
+    last30Days: 'Last 30 days',
+    previousPage: 'Previous',
+    nextPage: 'Next',
+    logTotal: '{total} total',
     requestTime: 'Request time',
-    fromTime: 'From',
-    toTime: 'To',
     cacheCreation: 'Cache creation',
     cacheHit: 'Cache hit',
     failureReason: 'Failure reason',
@@ -375,6 +410,7 @@ const dictionary = {
     confirmImport: 'Confirm import',
     cancel: 'Cancel',
     copiedSecret: 'Key copied',
+    createdKeySuccess: 'Key created',
     deleteConfirm: 'Delete this key?',
     useWithCodex: 'Import Codex',
     useWithClaude: 'Import Claude Code',
@@ -437,7 +473,7 @@ function App() {
   const [language, setLanguage] = React.useState<Language>('zh-CN');
   const [activeTab, setActiveTab] = React.useState<Tab>('dashboard');
   const [adminToken, setAdminToken] = React.useState(localStorage.getItem('adminToken') || '');
-  const [data, setData] = React.useState<Bootstrap>({ summary: defaultSummary, plans: [], keys: [], logs: [] });
+  const [data, setData] = React.useState<Bootstrap>({ summary: defaultSummary, plans: [], keys: [] });
   const [loading, setLoading] = React.useState(true);
   const [notice, setNotice] = React.useState('');
   const t = dictionary[language];
@@ -541,7 +577,7 @@ function App() {
         {activeTab === 'dashboard' ? <Dashboard data={data} t={t} /> : null}
         {activeTab === 'keys' ? <KeysPanel data={data} headers={headers} reload={load} t={t} /> : null}
         {activeTab === 'plans' ? <PlansPanel plans={data.plans} headers={headers} reload={load} t={t} /> : null}
-        {activeTab === 'logs' ? <LogsPanel logs={data.logs} t={t} /> : null}
+        {activeTab === 'logs' ? <LogsPanel keys={data.keys} headers={headers} t={t} /> : null}
       </main>
     </div>
   );
@@ -720,6 +756,7 @@ function KeysPanel({
       setIsCreateOpen(false);
       setName('');
       await reload();
+      setNotice(t.createdKeySuccess);
     } else {
       setNotice(payload.error || t.keyUnavailable);
     }
@@ -786,6 +823,7 @@ function KeysPanel({
             setUseTarget(apiKey);
             setSelectedAgent('claude');
           }}
+          onCreate={() => setIsCreateOpen(true)}
           onRevoke={setRevokeTarget}
         />
       </section>
@@ -897,6 +935,7 @@ function KeyRows({
   copiedId,
   onCopy,
   onUse,
+  onCreate,
   onRevoke
 }: {
   keys: ApiKey[];
@@ -904,9 +943,19 @@ function KeyRows({
   copiedId: string;
   onCopy: (apiKey: ApiKey) => Promise<void>;
   onUse: (apiKey: ApiKey) => void;
+  onCreate: () => void;
   onRevoke?: (apiKey: ApiKey) => void;
 }) {
-  if (!keys.length) return <Empty t={t} />;
+  if (!keys.length) {
+    return (
+      <Empty t={t}>
+        <button type="button" className="primary-button" onClick={onCreate}>
+          <Plus size={17} />
+          {t.createKey}
+        </button>
+      </Empty>
+    );
+  }
 
   return (
     <div className="key-table">
@@ -1077,44 +1126,117 @@ function PlansPanel({
   );
 }
 
-function LogsPanel({ logs, t }: { logs: UsageLog[]; t: Record<string, string> }) {
-  const [status, setStatus] = React.useState<'all' | 'success' | 'failed'>('all');
-  const [fromTime, setFromTime] = React.useState('');
-  const [toTime, setToTime] = React.useState('');
+function LogsPanel({ keys, headers, t }: { keys: ApiKey[]; headers: HeadersInit; t: Record<string, string> }) {
+  const [status, setStatus] = React.useState<LogStatus>('all');
+  const [apiKeyId, setApiKeyId] = React.useState('all');
+  const [range, setRange] = React.useState<LogRange>('24h');
+  const [page, setPage] = React.useState(1);
+  const [logPage, setLogPage] = React.useState<LogPage>({ logs: [], total: 0, page: 1, pageSize: 20 });
+  const [loading, setLoading] = React.useState(false);
+  const [notice, setNotice] = React.useState('');
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
-  const filtered = logs.filter((log) => {
-    const isSuccess = log.statusCode >= 200 && log.statusCode < 300;
-    if (status === 'success' && !isSuccess) return false;
-    if (status === 'failed' && isSuccess) return false;
+  const pageCount = Math.max(1, Math.ceil(logPage.total / logPage.pageSize));
 
-    const createdAt = new Date(log.createdAt).getTime();
-    if (fromTime && createdAt < new Date(fromTime).getTime()) return false;
-    if (toTime && createdAt > new Date(toTime).getTime()) return false;
-    return true;
-  });
+  const loadLogs = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(logPage.pageSize),
+        status,
+        range
+      });
+      if (apiKeyId !== 'all') params.set('apiKeyId', apiKeyId);
+      const response = await fetch(`/api/logs?${params.toString()}`, { headers });
+      const payload = await response.json();
+      if (!response.ok) {
+        setNotice(payload.error || t.noData);
+        return;
+      }
+      setLogPage(payload as LogPage);
+      setExpandedId(null);
+      setNotice('');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : t.noData);
+    } finally {
+      setLoading(false);
+    }
+  }, [apiKeyId, headers, logPage.pageSize, page, range, status, t.noData]);
+
+  React.useEffect(() => {
+    void loadLogs();
+  }, [loadLogs]);
+
+  function updateStatus(value: LogStatus) {
+    setStatus(value);
+    setPage(1);
+  }
+
+  function updateApiKey(value: string) {
+    setApiKeyId(value);
+    setPage(1);
+  }
+
+  function updateRange(value: LogRange) {
+    setRange(value);
+    setPage(1);
+  }
 
   return (
     <section className="content-grid">
       <div className="log-filters">
         <label>
+          {t.logKey}
+          <select value={apiKeyId} onChange={(event) => updateApiKey(event.target.value)}>
+            <option value="all">{t.allKeys}</option>
+            {keys.map((apiKey) => (
+              <option value={apiKey.id} key={apiKey.id}>
+                {apiKey.name || apiKey.keyPreview || apiKey.id}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
           {t.status}
-          <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}>
+          <select value={status} onChange={(event) => updateStatus(event.target.value as LogStatus)}>
             <option value="all">{t.allStatuses}</option>
             <option value="success">{t.successOnly}</option>
             <option value="failed">{t.failedOnly}</option>
           </select>
         </label>
         <label>
-          {t.fromTime}
-          <input value={fromTime} onChange={(event) => setFromTime(event.target.value)} type="datetime-local" />
-        </label>
-        <label>
-          {t.toTime}
-          <input value={toTime} onChange={(event) => setToTime(event.target.value)} type="datetime-local" />
+          {t.timeRange}
+          <select value={range} onChange={(event) => updateRange(event.target.value as LogRange)}>
+            <option value="24h">{t.last24Hours}</option>
+            <option value="3d">{t.last3Days}</option>
+            <option value="7d">{t.last7Days}</option>
+            <option value="30d">{t.last30Days}</option>
+          </select>
         </label>
       </div>
       <section className="table-panel">
-        <LogRows logs={filtered} t={t} expandedId={expandedId} setExpandedId={setExpandedId} />
+        {notice ? <div className="notice inline">{notice}</div> : null}
+        {loading ? <div className="loading-line" /> : null}
+        <LogRows logs={logPage.logs} t={t} expandedId={expandedId} setExpandedId={setExpandedId} />
+        <div className="pagination-bar">
+          <span>{t.logTotal.replace('{total}', String(logPage.total))}</span>
+          <div>
+            <button type="button" className="secondary-button" onClick={() => setPage((value) => value - 1)} disabled={page <= 1}>
+              {t.previousPage}
+            </button>
+            <strong>
+              {page} / {pageCount}
+            </strong>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setPage((value) => value + 1)}
+              disabled={page >= pageCount}
+            >
+              {t.nextPage}
+            </button>
+          </div>
+        </div>
       </section>
     </section>
   );
@@ -1193,8 +1315,13 @@ function BreakdownItem({ label, tokens, cents }: { label: string; tokens: number
   );
 }
 
-function Empty({ t }: { t: Record<string, string> }) {
-  return <div className="empty-state">{t.noData}</div>;
+function Empty({ t, children }: { t: Record<string, string>; children?: React.ReactNode }) {
+  return (
+    <div className="empty-state">
+      <span>{t.noData}</span>
+      {children}
+    </div>
+  );
 }
 
 function compact(value: number) {
