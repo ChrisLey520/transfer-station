@@ -14,6 +14,7 @@ import {
   listKeys,
   listPlans,
   listUsageLogs,
+  pruneUsageLogs,
   revokeKey,
   seedDefaults,
   touchKey,
@@ -32,6 +33,7 @@ const anthropicVersion = process.env.ANTHROPIC_VERSION || '2023-06-01';
 
 initDb();
 seedDefaults();
+pruneUsageLogs();
 
 app.use(cors());
 app.use(express.json({ limit: '12mb' }));
@@ -171,8 +173,7 @@ app.get('/api/bootstrap', adminGuard, (_req, res) => {
   res.json({
     summary: usageSummary(),
     plans: listPlans(),
-    keys: listKeys(),
-    logs: listUsageLogs()
+    keys: listKeys()
   });
 });
 
@@ -300,8 +301,21 @@ app.delete('/api/keys/:id', adminGuard, (req, res) => {
 });
 
 app.get('/api/logs', adminGuard, (req, res) => {
-  const limit = Number(req.query.limit || 80);
-  res.json({ logs: listUsageLogs(Math.min(Math.max(limit, 1), 300)) });
+  const schema = z.object({
+    page: z.coerce.number().int().positive().default(1),
+    pageSize: z.coerce.number().int().positive().max(100).default(20),
+    status: z.enum(['all', 'success', 'failed']).default('all'),
+    apiKeyId: z.string().optional(),
+    range: z.enum(['24h', '3d', '7d', '30d']).default('24h')
+  });
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const apiKeyId = parsed.data.apiKeyId && parsed.data.apiKeyId !== 'all' ? parsed.data.apiKeyId : undefined;
+  res.json(listUsageLogs({ ...parsed.data, apiKeyId }));
 });
 
 app.get('/api/usage', adminGuard, (_req, res) => {

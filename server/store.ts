@@ -7,6 +7,25 @@ import type { ApiKeyRecord, KeyListItem, KeyWithPlan, Plan, QuotaSnapshot, Usage
 const makeId = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 16);
 const fiveHoursMs = 5 * 60 * 60 * 1000;
 const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+
+type LogRange = '24h' | '3d' | '7d' | '30d';
+type LogStatus = 'all' | 'success' | 'failed';
+
+type UsageLogQuery = {
+  page?: number;
+  pageSize?: number;
+  status?: LogStatus;
+  apiKeyId?: string;
+  range?: LogRange;
+};
+
+const logRangeMs: Record<LogRange, number> = {
+  '24h': 24 * 60 * 60 * 1000,
+  '3d': 3 * 24 * 60 * 60 * 1000,
+  '7d': sevenDaysMs,
+  '30d': thirtyDaysMs
+};
 
 export function seedDefaults() {
   const count = db.prepare('SELECT COUNT(*) as count FROM plans').get() as { count: number };
@@ -66,6 +85,11 @@ export function seedDefaults() {
 
   seedSampleLogs();
   backfillUsageLogCosts();
+}
+
+export function pruneUsageLogs() {
+  const cutoff = new Date(Date.now() - thirtyDaysMs).toISOString();
+  return db.prepare('DELETE FROM usage_logs WHERE created_at < ?').run(cutoff).changes;
 }
 
 function normalizeLegacyPlanLimits() {
@@ -660,23 +684,61 @@ export function createUsageLog(
   `
   ).run(log);
 
+  pruneUsageLogs();
   return id;
 }
 
-export function listUsageLogs(limit = 80): UsageLog[] {
-  return db
+export function listUsageLogs(input: UsageLogQuery = {}) {
+  pruneUsageLogs();
+
+  const page = Math.max(1, Math.floor(input.page || 1));
+  const pageSize = Math.min(Math.max(1, Math.floor(input.pageSize || 20)), 100);
+  const range = input.range || '24h';
+  const status = input.status || 'all';
+  const since = new Date(Date.now() - logRangeMs[range]).toISOString();
+  const params: Record<string, string | number> = { since };
+  const filters = ['created_at >= @since'];
+
+  if (status === 'success') {
+    filters.push('status_code BETWEEN 200 AND 299');
+  } else if (status === 'failed') {
+    filters.push('(status_code < 200 OR status_code >= 300)');
+  }
+
+  if (input.apiKeyId) {
+    filters.push('api_key_id = @apiKeyId');
+    params.apiKeyId = input.apiKeyId;
+  }
+
+  const where = `WHERE ${filters.join(' AND ')}`;
+  const total = db.prepare(`SELECT COUNT(*) as count FROM usage_logs ${where}`).get(params) as { count: number };
+  const pageParams = {
+    ...params,
+    pageSize,
+    offset: (page - 1) * pageSize
+  };
+  const logs = db
     .prepare(
       `
       SELECT * FROM usage_logs
+      ${where}
       ORDER BY created_at DESC
-      LIMIT ?
+      LIMIT @pageSize OFFSET @offset
     `
     )
-    .all(limit)
+    .all(pageParams)
     .map(mapLog);
+
+  return {
+    logs,
+    total: total.count,
+    page,
+    pageSize
+  };
 }
 
 export function usageSummary() {
+  pruneUsageLogs();
   const now = Date.now();
   const fiveHourSince = new Date(now - fiveHoursMs).toISOString();
   const weeklySince = new Date(now - sevenDaysMs).toISOString();
