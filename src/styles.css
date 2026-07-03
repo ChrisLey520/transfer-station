@@ -2414,11 +2414,15 @@ code {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--card-gradient);
+  transition: border-color 160ms ease;
 }
 
 .upgrade-card.recommended {
-  border-color: rgba(var(--accent-rgb), 0.55);
   background: var(--card-gradient-strong);
+}
+
+.upgrade-card:hover {
+  border-color: rgba(var(--accent-rgb), 0.55);
 }
 
 .recommended-badge {
