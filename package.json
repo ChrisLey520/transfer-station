@@ -4,8 +4,17 @@
   "private": true,
   "description": "Claude Code API transfer station with multilingual admin, API key management, usage logs, and rolling quota plans.",
   "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=24.0.0 <26",
+    "pnpm": ">=11 <12"
+  },
   "scripts": {
-    "dev": "concurrently -k -n api,web -c cyan,green \"npm:dev:server\" \"npm:dev:web\"",
+    "check:runtime": "node scripts/check-runtime.mjs",
+    "predev": "pnpm run check:runtime",
+    "prestart": "pnpm run check:runtime",
+    "preseed": "pnpm run check:runtime",
+    "dev": "concurrently -k -n api,web -c cyan,green \"pnpm:dev:server\" \"pnpm:dev:web\"",
     "dev:server": "tsx watch server/index.ts",
     "dev:web": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
@@ -22,7 +31,6 @@
   "license": "MIT",
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.0",
-    "better-sqlite3": "^12.2.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
@@ -35,7 +43,6 @@
     "zod": "^4.2.1"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^25.0.3",
