@@ -392,7 +392,8 @@ const dictionary = {
     planGuard: '双滚动限制',
     quotaHint: '任一窗口耗尽都会拦截请求',
     upstreamMissing: '上游 Key 未配置',
-    upstreamReady: '上游已配置'
+    upstreamReady: '上游已配置',
+    requestFailed: '请求失败，请稍后重试。'
   },
   'zh-TW': {
     brand: 'RelayHub',
@@ -583,7 +584,8 @@ const dictionary = {
     planGuard: '雙滾動限制',
     quotaHint: '任一視窗耗盡都會攔截請求',
     upstreamMissing: '上游 Key 未設定',
-    upstreamReady: '上游已設定'
+    upstreamReady: '上游已設定',
+    requestFailed: '請求失敗，請稍後再試。'
   },
   en: {
     brand: 'RelayHub',
@@ -774,7 +776,8 @@ const dictionary = {
     planGuard: 'Dual rolling limits',
     quotaHint: 'Requests are blocked when either window is exhausted',
     upstreamMissing: 'Upstream key missing',
-    upstreamReady: 'Upstream configured'
+    upstreamReady: 'Upstream configured',
+    requestFailed: 'Request failed. Please try again.'
   }
 } satisfies Record<Language, Record<string, string>>;
 
@@ -979,6 +982,78 @@ const accentThemeOptions = [
   { id: 'bay-blue' as const, labelKey: 'bayBlue' }
 ];
 
+function extractErrorMessage(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (!value || typeof value !== 'object') return '';
+
+  const record = value as Record<string, unknown>;
+  if (typeof record.message === 'string') return record.message;
+  if (typeof record.error === 'string') return record.error;
+  if (typeof record.detail === 'string') return record.detail;
+  if (typeof record.details === 'string') return record.details;
+
+  if (record.error) {
+    const nested = extractErrorMessage(record.error);
+    if (nested) return nested;
+  }
+
+  if (record.detail) {
+    const nested = extractErrorMessage(record.detail);
+    if (nested) return nested;
+  }
+
+  if (record.details) {
+    const nested = extractErrorMessage(record.details);
+    if (nested) return nested;
+  }
+
+  if (typeof record.invalidMessage === 'string') return record.invalidMessage;
+
+  if (Array.isArray(record.errors)) {
+    const messages = record.errors
+      .map((entry) => extractErrorMessage(entry))
+      .filter((entry) => entry.length > 0);
+    if (messages.length > 0) return messages.join(' ');
+  }
+
+  const fieldErrors = record.fieldErrors;
+  if (fieldErrors && typeof fieldErrors === 'object') {
+    const messages = Object.values(fieldErrors as Record<string, unknown>)
+      .flatMap((entry) => (Array.isArray(entry) ? entry : [entry]))
+      .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
+    if (messages.length > 0) return messages.join(' ');
+  }
+
+  const formErrors = record.formErrors;
+  if (Array.isArray(formErrors)) {
+    const messages = formErrors.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
+    if (messages.length > 0) return messages.join(' ');
+  }
+
+  return '';
+}
+
+async function readJsonResponse(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { message: text };
+  }
+}
+
+function responseErrorMessage(response: Response, payload: unknown, fallback: string) {
+  const message = extractErrorMessage(payload) || response.statusText || fallback;
+  const statusText = response.statusText ? ` ${response.statusText}` : '';
+  return `${message} (${response.status}${statusText})`;
+}
+
+function unknownErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 const routeTabSegments: Record<Tab, string> = {
   dashboard: 'dashboard',
   keys: 'keys',
@@ -1134,15 +1209,19 @@ function App() {
         setLoading(false);
         return;
       }
-      const bootstrap = (await bootstrapRes.json()) as Bootstrap;
+      const payload = await readJsonResponse(bootstrapRes);
+      if (!bootstrapRes.ok) {
+        throw new Error(responseErrorMessage(bootstrapRes, payload, t.requestFailed));
+      }
+      const bootstrap = payload as Bootstrap;
       setData(bootstrap);
       setNotice('');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Unable to load data.');
+      setNotice(unknownErrorMessage(error, t.requestFailed));
     } finally {
       setLoading(false);
     }
-  }, [authToken, headers]);
+  }, [authToken, headers, t.requestFailed]);
 
   React.useEffect(() => {
     void load();
@@ -1368,16 +1447,16 @@ function AuthPage({
           ...(mode === 'register' ? { displayName } : {})
         })
       });
-      const payload = await response.json();
+      const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setNotice(typeof payload.error === 'string' ? payload.error : t.keyUnavailable);
+        setNotice(responseErrorMessage(response, payload, t.requestFailed));
         setCaptchaToken('');
         setVerificationResetKey((value) => value + 1);
         return;
       }
       onAuthenticated(payload as AuthSession);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : t.keyUnavailable);
+      setNotice(unknownErrorMessage(error, t.requestFailed));
       setCaptchaToken('');
       setVerificationResetKey((value) => value + 1);
     } finally {
@@ -1745,14 +1824,14 @@ function SliderVerification({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ purpose: mode })
       });
-      const payload = await response.json();
+      const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setStatus(typeof payload.error === 'string' ? payload.error : t.verificationFailed);
+        setStatus(responseErrorMessage(response, payload, t.verificationFailed));
         return;
       }
       setChallenge(payload as SliderChallenge);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : t.verificationFailed);
+      setStatus(unknownErrorMessage(error, t.verificationFailed));
     } finally {
       setIsLoading(false);
     }
@@ -1776,9 +1855,9 @@ function SliderVerification({
           positionPct: nextValue
         })
       });
-      const payload = await response.json();
+      const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setStatus(typeof payload.error === 'string' ? payload.error : t.verificationFailed);
+        setStatus(responseErrorMessage(response, payload, t.verificationFailed));
         setValue(0);
         onTokenChange('');
         void loadChallenge();
@@ -1787,9 +1866,9 @@ function SliderVerification({
       setIsVerified(true);
       setValue(nextValue);
       setStatus(t.verified);
-      onTokenChange(payload.captchaToken || '');
+      onTokenChange((payload as { captchaToken?: string }).captchaToken || '');
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : t.verificationFailed);
+      setStatus(unknownErrorMessage(error, t.verificationFailed));
       setValue(0);
       onTokenChange('');
       void loadChallenge();
@@ -2566,46 +2645,59 @@ function KeysPanel({
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    const response = await fetch('/api/user/keys', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ name })
-    });
-    const payload = await response.json();
-    if (response.ok) {
+    try {
+      const response = await fetch('/api/user/keys', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ name })
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        setNotice(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
       setIsCreateOpen(false);
       setName('');
       await reload();
       setNotice(t.createdKeySuccess);
-    } else {
-      setNotice(payload.error || t.keyUnavailable);
+    } catch (error) {
+      setNotice(unknownErrorMessage(error, t.requestFailed));
     }
   }
 
   async function fetchSecret(id: string): Promise<KeySecret | null> {
-    const response = await fetch(`/api/user/keys/${id}/secret`, { headers });
-    const payload = await response.json();
-    if (!response.ok) {
-      setNotice(payload.error || t.keyUnavailable);
+    try {
+      const response = await fetch(`/api/user/keys/${id}/secret`, { headers });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        setNotice(responseErrorMessage(response, payload, t.keyUnavailable));
+        return null;
+      }
+      setNotice('');
+      return payload as KeySecret;
+    } catch (error) {
+      setNotice(unknownErrorMessage(error, t.requestFailed));
       return null;
     }
-    setNotice('');
-    return payload as KeySecret;
   }
 
   async function revoke(apiKey: ApiKey) {
     setIsRevoking(true);
-    const response = await fetch(`/api/user/keys/${apiKey.id}`, { method: 'DELETE', headers });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      setNotice(payload.error || t.keyUnavailable);
+    try {
+      const response = await fetch(`/api/user/keys/${apiKey.id}`, { method: 'DELETE', headers });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        setNotice(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setNotice('');
+      setRevokeTarget(null);
+      await reload();
+    } catch (error) {
+      setNotice(unknownErrorMessage(error, t.requestFailed));
+    } finally {
       setIsRevoking(false);
-      return;
     }
-    setNotice('');
-    setRevokeTarget(null);
-    await reload();
-    setIsRevoking(false);
   }
 
   async function copyExistingKey(apiKey: ApiKey) {
@@ -2884,9 +2976,9 @@ function PlansPanel({
         headers,
         body: JSON.stringify({ code })
       });
-      const payload = await response.json();
+      const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setRedeemNotice(payload.error || t.keyUnavailable);
+        setRedeemNotice(responseErrorMessage(response, payload, t.requestFailed));
         return;
       }
       const result = payload as GiftCardPreview;
@@ -2896,26 +2988,30 @@ function PlansPanel({
       }
       await redeemCreditGiftCard(code);
     } catch (error) {
-      setRedeemNotice(error instanceof Error ? error.message : t.keyUnavailable);
+      setRedeemNotice(unknownErrorMessage(error, t.requestFailed));
     } finally {
       setIsRedeeming(false);
     }
   }
 
   async function redeemCreditGiftCard(code: string) {
-    const response = await fetch('/api/user/gift-cards/redeem', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ code })
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      setRedeemNotice(payload.error || t.keyUnavailable);
-      return;
+    try {
+      const response = await fetch('/api/user/gift-cards/redeem', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ code })
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        setRedeemNotice(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setRedeemNotice((payload as { message?: string }).message || t.redeem);
+      setRedeemCode('');
+      await reload();
+    } catch (error) {
+      setRedeemNotice(unknownErrorMessage(error, t.requestFailed));
     }
-    setRedeemNotice(payload.message || t.redeem);
-    setRedeemCode('');
-    await reload();
   }
 
   async function confirmGiftCard() {
@@ -2927,17 +3023,17 @@ function PlansPanel({
         headers,
         body: JSON.stringify({ code: giftPreview.card.code, confirm: true })
       });
-      const payload = await response.json();
+      const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setRedeemNotice(payload.error || t.keyUnavailable);
+        setRedeemNotice(responseErrorMessage(response, payload, t.requestFailed));
         return;
       }
       setGiftPreview(null);
       setRedeemCode('');
-      setRedeemNotice(payload.message || t.redeem);
+      setRedeemNotice((payload as { message?: string }).message || t.redeem);
       await reload();
     } catch (error) {
-      setRedeemNotice(error instanceof Error ? error.message : t.keyUnavailable);
+      setRedeemNotice(unknownErrorMessage(error, t.requestFailed));
     } finally {
       setIsRedeeming(false);
     }
@@ -3251,20 +3347,20 @@ function LogsPanel({ keys, headers, t }: { keys: ApiKey[]; headers: HeadersInit;
       });
       if (apiKeyId !== 'all') params.set('apiKeyId', apiKeyId);
       const response = await fetch(`/api/user/logs?${params.toString()}`, { headers });
-      const payload = await response.json();
+      const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setNotice(payload.error || t.noData);
+        setNotice(responseErrorMessage(response, payload, t.requestFailed));
         return;
       }
       setLogPage(payload as LogPage);
       setExpandedId(null);
       setNotice('');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : t.noData);
+      setNotice(unknownErrorMessage(error, t.requestFailed));
     } finally {
       setLoading(false);
     }
-  }, [apiKeyId, headers, logPage.pageSize, page, range, status, t.noData]);
+  }, [apiKeyId, headers, logPage.pageSize, page, range, status, t.requestFailed]);
 
   React.useEffect(() => {
     void loadLogs();
