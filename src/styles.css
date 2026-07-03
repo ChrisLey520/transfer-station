@@ -219,6 +219,11 @@ button {
   line-height: 1.45;
 }
 
+.brand-subtitle-highlight {
+  color: var(--accent-text);
+  font-weight: 800;
+}
+
 .nav-list {
   display: grid;
   gap: 6px;
@@ -355,6 +360,7 @@ code {
 }
 
 .auth-form input {
+  width: 100%;
   min-height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -364,6 +370,37 @@ code {
 
 .auth-form input:focus {
   border-color: var(--teal);
+}
+
+.password-input-shell {
+  position: relative;
+  display: block;
+}
+
+.password-input-shell input {
+  padding-right: 42px;
+}
+
+.password-visibility-button {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.password-visibility-button:hover,
+.password-visibility-button:focus-visible {
+  background: var(--surface-soft);
+  color: var(--ink);
 }
 
 .auth-footer {
@@ -1296,13 +1333,58 @@ code {
   background: var(--surface-raised);
 }
 
-.markdown-code-label {
-  display: block;
-  padding: 8px 12px;
+.markdown-code-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  padding: 6px 8px 6px 12px;
   border-bottom: 1px solid var(--line);
+}
+
+.markdown-code-label {
   color: var(--muted);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
+}
+
+.markdown-code-copy {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(var(--surface-rgb), 0.9);
+  color: var(--muted);
+  opacity: 0;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.markdown-code-block:hover .markdown-code-copy,
+.markdown-code-block:focus-within .markdown-code-copy {
+  opacity: 1;
+}
+
+.markdown-code-copy:hover {
+  border-color: rgba(var(--accent-rgb), 0.32);
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--accent-text);
+}
+
+.markdown-code-copy:focus-visible {
+  outline: 2px solid rgba(var(--accent-rgb), 0.36);
+  outline-offset: 2px;
+}
+
+@media (hover: none) {
+  .markdown-code-copy {
+    opacity: 1;
+  }
 }
 
 .markdown-code-block pre {
@@ -1319,6 +1401,14 @@ code {
 .overview-page {
   display: grid;
   gap: 18px;
+}
+
+.overview-welcome {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.45;
 }
 
 .overview-card-grid {

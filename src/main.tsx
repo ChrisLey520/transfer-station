@@ -9,6 +9,8 @@ import {
   Copy,
   CreditCard,
   DollarSign,
+  Eye,
+  EyeOff,
   Gauge,
   Globe2,
   KeyRound,
@@ -265,13 +267,15 @@ const dictionary = {
     todayRequests: '今日请求',
     todayCacheHitRate: '今日缓存命中率',
     upgrade: '升级',
+    overviewWelcome: '欢迎回来',
+    overviewWelcomeNamed: '欢迎回来，{name}',
     quickAccess: '快捷入口',
     keyManagement: '密钥管理',
     viewUsage: '查看用量',
     planUpgrade: '套餐升级',
     usageLogs: '使用日志',
     planIncluded: '套餐内额度',
-    extraBalance: '非套餐内余额',
+    extraBalance: '自由余额',
     tokenUsage: 'Token 用量',
     costUsage: '用量',
     used: '已用',
@@ -341,6 +345,8 @@ const dictionary = {
     memberRole: '会员',
     email: '邮箱',
     password: '密码',
+    showPassword: '显示密码',
+    hidePassword: '隐藏密码',
     displayName: '昵称',
     loginTitle: '登录',
     registerTitle: '加入',
@@ -452,13 +458,15 @@ const dictionary = {
     todayRequests: '今日請求',
     todayCacheHitRate: '今日快取命中率',
     upgrade: '升級',
+    overviewWelcome: '歡迎回來',
+    overviewWelcomeNamed: '歡迎回來，{name}',
     quickAccess: '快捷入口',
     keyManagement: '金鑰管理',
     viewUsage: '查看用量',
     planUpgrade: '套餐升級',
     usageLogs: '使用日誌',
     planIncluded: '套餐內額度',
-    extraBalance: '非套餐內餘額',
+    extraBalance: '自由餘額',
     tokenUsage: 'Token 用量',
     costUsage: '用量',
     used: '已用',
@@ -528,6 +536,8 @@ const dictionary = {
     memberRole: '會員',
     email: '信箱',
     password: '密碼',
+    showPassword: '顯示密碼',
+    hidePassword: '隱藏密碼',
     displayName: '暱稱',
     loginTitle: '登入',
     registerTitle: '加入',
@@ -639,6 +649,8 @@ const dictionary = {
     todayRequests: 'Today requests',
     todayCacheHitRate: 'Today cache hit rate',
     upgrade: 'Upgrade',
+    overviewWelcome: 'Welcome back',
+    overviewWelcomeNamed: 'Welcome back, {name}',
     quickAccess: 'Quick access',
     keyManagement: 'Key management',
     viewUsage: 'View usage',
@@ -715,6 +727,8 @@ const dictionary = {
     memberRole: 'Member',
     email: 'Email',
     password: 'Password',
+    showPassword: 'Show password',
+    hidePassword: 'Hide password',
     displayName: 'Name',
     loginTitle: 'Log in to',
     registerTitle: 'Join',
@@ -865,47 +879,38 @@ const upgradePlans: UpgradePlan[] = [
     id: 'pro',
     name: 'Pro',
     subtitle: '入门版',
-    monthlyPriceYuan: 5,
-    fiveHourCreditUsd: 10,
-    weeklyCreditUsd: 67,
-    features: ['$10 / 5 小时 · $66 / 7 天', '完整访问 FRE-5.4 与 FRE-5.5', '邮件支持 · 24 小时响应']
-  },
-  {
-    id: 'pro-plus',
-    name: 'Pro+',
-    subtitle: '标准版',
-    monthlyPriceYuan: 10,
+    monthlyPriceYuan: 60,
     fiveHourCreditUsd: 20,
-    weeklyCreditUsd: 132,
-    features: ['2 倍 于入门版用量', '更高并发请求', '邮件支持 · 24 小时响应']
+    weeklyCreditUsd: 140,
+    features: ['$20 / 5 小时 · $140 / 7 天', '完整访问 Claude Code Opus 4.8 和 Gpt 5.5']
   },
   {
     id: 'max',
     name: 'Max',
     subtitle: '专业版',
-    monthlyPriceYuan: 20,
+    monthlyPriceYuan: 119,
     fiveHourCreditUsd: 40,
     weeklyCreditUsd: 264,
-    features: ['4 倍 于入门版用量', '开发效率工具', '更高输出限额', '优先邮件支持'],
+    features: ['2 倍 于入门版用量', '开发效率工具', '更高输出限额'],
     recommended: true
   },
   {
     id: 'ultra',
     name: 'Ultra',
     subtitle: '高级版',
-    monthlyPriceYuan: 100,
+    monthlyPriceYuan: 580,
     fiveHourCreditUsd: 200,
     weeklyCreditUsd: 1320,
-    features: ['20 倍 于入门版用量', '适合重度开发工作流', '优先体验高级功能', '峰值流量优先访问']
+    features: ['10 倍 于入门版用量', '适合重度开发工作流', '优先体验高级功能', '峰值流量优先访问']
   },
   {
     id: 'power',
     name: 'Power',
     subtitle: '旗舰版 · 团队与高强度工作量',
-    monthlyPriceYuan: 200,
+    monthlyPriceYuan: 1150,
     fiveHourCreditUsd: 400,
     weeklyCreditUsd: 2640,
-    features: ['40 倍 于入门版用量', '包含高级版全部权益', '最高输出限制', '专属入门服务', '优先邮件支持 · 12 小时响应']
+    features: ['20 倍 于入门版用量', '包含高级版全部权益', '最高输出限制', '专属入门服务']
   }
 ];
 
@@ -988,9 +993,9 @@ const routeSegmentTabs = Object.entries(routeTabSegments).reduce<Record<string, 
   return map;
 }, {});
 
-function readHashRoute(): { tab: Tab; planView: PlanView } {
-  const route = window.location.hash.replace(/^#\/?/, '').replace(/\/+$/, '');
-  const [segment = '', viewSegment = ''] = route.split('/');
+function resolveRoute(route: string): { tab: Tab; planView: PlanView } {
+  const normalizedRoute = route.replace(/^\/+/, '').replace(/\/+$/, '');
+  const [segment = '', viewSegment = ''] = normalizedRoute.split('/');
   const tab = routeSegmentTabs[segment] || 'dashboard';
   return {
     tab,
@@ -998,15 +1003,21 @@ function readHashRoute(): { tab: Tab; planView: PlanView } {
   };
 }
 
-function routeToHash(tab: Tab, planView: PlanView) {
-  const segment = routeTabSegments[tab];
-  return tab === 'plans' && planView === 'change' ? `#/${segment}/change` : `#/${segment}`;
+function readHistoryRoute(): { tab: Tab; planView: PlanView } {
+  const legacyHashRoute = window.location.hash.match(/^#\/(.+)/)?.[1];
+  if (legacyHashRoute) return resolveRoute(legacyHashRoute);
+  return resolveRoute(window.location.pathname);
 }
 
-function writeHashRoute(tab: Tab, planView: PlanView, replace = false) {
-  const nextHash = routeToHash(tab, planView);
-  if (window.location.hash === nextHash) return;
-  const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`;
+function routeToPath(tab: Tab, planView: PlanView) {
+  const segment = routeTabSegments[tab];
+  return tab === 'plans' && planView === 'change' ? `/${segment}/change` : `/${segment}`;
+}
+
+function writeHistoryRoute(tab: Tab, planView: PlanView, replace = false) {
+  const nextPath = routeToPath(tab, planView);
+  if (!window.location.hash && window.location.pathname === nextPath) return;
+  const nextUrl = `${nextPath}${window.location.search}`;
   if (replace) {
     window.history.replaceState(null, '', nextUrl);
     return;
@@ -1052,6 +1063,24 @@ function BrandMark() {
   );
 }
 
+function BrandSubtitle({ subtitle }: { subtitle: string }) {
+  const keyword = subtitle.includes('满血') ? '满血' : subtitle.includes('滿血') ? '滿血' : '';
+
+  if (!keyword) {
+    return <p>{subtitle}</p>;
+  }
+
+  const [before, after] = subtitle.split(keyword);
+
+  return (
+    <p>
+      {before}
+      <strong className="brand-subtitle-highlight">{keyword}</strong>
+      {after}
+    </p>
+  );
+}
+
 function GuideMenuIcon({ size = 18 }: { size?: number }) {
   return <img className="nav-pixel-icon" src={guideIconSrc} alt="" width={size} height={size} />;
 }
@@ -1071,7 +1100,7 @@ function getPageTitle(tab: Tab, planView: PlanView, t: Record<string, string>) {
 }
 
 function App() {
-  const initialRoute = React.useMemo(() => readHashRoute(), []);
+  const initialRoute = React.useMemo(() => readHistoryRoute(), []);
   const [language, setLanguage] = React.useState<Language>('zh-CN');
   const [activeTab, setActiveTab] = React.useState<Tab>(initialRoute.tab);
   const [planView, setPlanView] = React.useState<PlanView>(initialRoute.planView);
@@ -1120,19 +1149,17 @@ function App() {
   }, [load]);
 
   React.useEffect(() => {
-    writeHashRoute(activeTab, planView, true);
+    writeHistoryRoute(activeTab, planView, true);
 
-    function syncRouteFromHash() {
-      const nextRoute = readHashRoute();
+    function syncRouteFromHistory() {
+      const nextRoute = readHistoryRoute();
       setActiveTab(nextRoute.tab);
       setPlanView(nextRoute.planView);
     }
 
-    window.addEventListener('hashchange', syncRouteFromHash);
-    window.addEventListener('popstate', syncRouteFromHash);
+    window.addEventListener('popstate', syncRouteFromHistory);
     return () => {
-      window.removeEventListener('hashchange', syncRouteFromHash);
-      window.removeEventListener('popstate', syncRouteFromHash);
+      window.removeEventListener('popstate', syncRouteFromHistory);
     };
   }, [activeTab, planView]);
 
@@ -1189,7 +1216,7 @@ function App() {
   function navigate(tab: Tab, nextPlanView: PlanView = 'billing') {
     setActiveTab(tab);
     setPlanView(tab === 'plans' ? nextPlanView : 'billing');
-    writeHashRoute(tab, tab === 'plans' ? nextPlanView : 'billing');
+    writeHistoryRoute(tab, tab === 'plans' ? nextPlanView : 'billing');
   }
 
   function openPlanChange() {
@@ -1198,7 +1225,7 @@ function App() {
 
   function changePlanView(nextPlanView: PlanView) {
     setPlanView(nextPlanView);
-    writeHashRoute('plans', nextPlanView);
+    writeHistoryRoute('plans', nextPlanView);
   }
 
   if (!authToken) {
@@ -1230,7 +1257,7 @@ function App() {
           </div>
           <div>
             <h1>{t.brand}</h1>
-            <p>{t.subtitle}</p>
+            <BrandSubtitle subtitle={t.subtitle} />
           </div>
         </div>
         <nav className="nav-list">
@@ -1319,6 +1346,7 @@ function AuthPage({
   const [mode, setMode] = React.useState<AuthMode>('login');
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
+  const [isPasswordVisible, setIsPasswordVisible] = React.useState(false);
   const [displayName, setDisplayName] = React.useState('');
   const [captchaToken, setCaptchaToken] = React.useState('');
   const [verificationResetKey, setVerificationResetKey] = React.useState(0);
@@ -1381,6 +1409,7 @@ function AuthPage({
     setCaptchaToken('');
     setVerificationResetKey((value) => value + 1);
     setIsVerificationOpen(false);
+    setIsPasswordVisible(false);
   }
 
   return (
@@ -1398,27 +1427,54 @@ function AuthPage({
             <p>{t.authHint}</p>
           </div>
         </div>
-        <form className="auth-form" onSubmit={submit}>
+        <form className="auth-form" onSubmit={submit} autoComplete="on">
           {notice ? <div className="notice inline">{notice}</div> : null}
           <label>
             {t.email}
-            <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required autoFocus />
+            <input
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              type="email"
+              name="email"
+              autoComplete={mode === 'login' ? 'username' : 'email'}
+              inputMode="email"
+              required
+              autoFocus
+            />
           </label>
           {mode === 'register' ? (
             <label>
               {t.displayName}
-              <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+              <input
+                value={displayName}
+                onChange={(event) => setDisplayName(event.target.value)}
+                name="name"
+                autoComplete="name"
+              />
             </label>
           ) : null}
           <label>
             {t.password}
-            <input
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              type="password"
-              minLength={mode === 'register' ? 8 : undefined}
-              required
-            />
+            <span className="password-input-shell">
+              <input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                type={isPasswordVisible ? 'text' : 'password'}
+                name="password"
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                minLength={mode === 'register' ? 8 : undefined}
+                required
+              />
+              <button
+                type="button"
+                className="password-visibility-button"
+                onClick={() => setIsPasswordVisible((value) => !value)}
+                aria-label={isPasswordVisible ? t.hidePassword : t.showPassword}
+                title={isPasswordVisible ? t.hidePassword : t.showPassword}
+              >
+                {isPasswordVisible ? <EyeOff size={17} /> : <Eye size={17} />}
+              </button>
+            </span>
           </label>
           <button type="submit" className="primary-button" disabled={submitting}>
             {mode === 'login' ? t.login : t.register}
@@ -1611,6 +1667,7 @@ function AccountMenu({
   }, [isOpen]);
 
   const roleLabel = user.role === 'admin' ? t.adminRole : t.memberRole;
+  const userName = user.displayName?.trim() || user.email.split('@')[0] || '-';
 
   return (
     <div className="account-menu" ref={menuRef}>
@@ -1627,6 +1684,10 @@ function AccountMenu({
       {isOpen ? (
         <div className="account-menu-panel" role="menu">
           <div className="account-menu-profile">
+            <div className="account-menu-profile-row">
+              <span>{t.displayName}</span>
+              <strong>{userName}</strong>
+            </div>
             <div className="account-menu-profile-row">
               <span>{t.email}</span>
               <strong>{user.email || '-'}</strong>
@@ -1829,6 +1890,8 @@ function OverviewPage({
     data.summary.todayCacheCreationInputTokens +
     data.summary.todayCacheReadInputTokens;
   const todayCacheHitRate = todayCacheBase ? data.summary.todayCacheReadInputTokens / todayCacheBase : 0;
+  const welcomeName = data.user.displayName?.trim() || data.user.email.split('@')[0];
+  const welcomeMessage = welcomeName ? t.overviewWelcomeNamed.replace('{name}', welcomeName) : t.overviewWelcome;
 
   function openRechargeLink(channelId: PurchaseChannelId) {
     window.open(rechargePurchaseLinks[channelId], '_blank', 'noopener,noreferrer');
@@ -1844,6 +1907,8 @@ function OverviewPage({
 
   return (
     <section className="overview-page">
+      <p className="overview-welcome">{welcomeMessage}</p>
+
       <div className="overview-card-grid">
         <article className="overview-card current-plan-overview">
           <div className="overview-card-icon">
@@ -2117,13 +2182,13 @@ function GuidePage({ t }: { t: Record<string, string> }) {
             <p className="guide-loading-text">{t.guideLoading}</p>
           </>
         ) : null}
-        {!loading && markdown ? <MarkdownRenderer source={markdown} /> : null}
+        {!loading && markdown ? <MarkdownRenderer source={markdown} copyLabel={t.copy} copiedLabel={t.copied} /> : null}
       </section>
     </section>
   );
 }
 
-function MarkdownRenderer({ source }: { source: string }) {
+function MarkdownRenderer({ source, copyLabel, copiedLabel }: { source: string; copyLabel: string; copiedLabel: string }) {
   const blocks = React.useMemo(() => parseMarkdownBlocks(source), [source]);
   const { headingIds, tocItems } = React.useMemo(() => buildMarkdownNavigation(blocks), [blocks]);
 
@@ -2171,12 +2236,13 @@ function MarkdownRenderer({ source }: { source: string }) {
 
           if (block.type === 'code') {
             return (
-              <div className="markdown-code-block" key={`${block.type}-${index}`}>
-                {block.language ? <span className="markdown-code-label">{block.language}</span> : null}
-                <pre>
-                  <code>{block.code}</code>
-                </pre>
-              </div>
+              <MarkdownCodeBlock
+                code={block.code}
+                copiedLabel={copiedLabel}
+                copyLabel={copyLabel}
+                key={`${block.type}-${index}`}
+                language={block.language}
+              />
             );
           }
 
@@ -2192,6 +2258,77 @@ function MarkdownRenderer({ source }: { source: string }) {
       </article>
     </div>
   );
+}
+
+function MarkdownCodeBlock({
+  code,
+  language,
+  copyLabel,
+  copiedLabel
+}: {
+  code: string;
+  language: string;
+  copyLabel: string;
+  copiedLabel: string;
+}) {
+  const [copied, setCopied] = React.useState(false);
+  const resetTimerRef = React.useRef<number | undefined>(undefined);
+
+  React.useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
+    };
+  }, []);
+
+  async function copyCode() {
+    await copyTextToClipboard(code);
+    if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
+    setCopied(true);
+    resetTimerRef.current = window.setTimeout(() => setCopied(false), 1400);
+  }
+
+  return (
+    <div className="markdown-code-block">
+      <div className="markdown-code-topbar">
+        {language ? <span className="markdown-code-label">{language}</span> : <span aria-hidden="true" />}
+        <button
+          type="button"
+          className="markdown-code-copy"
+          onClick={copyCode}
+          aria-label={copied ? copiedLabel : copyLabel}
+          title={copied ? copiedLabel : copyLabel}
+        >
+          {copied ? <Check size={15} /> : <Copy size={15} />}
+        </button>
+      </div>
+      <pre>
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+}
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the legacy copy path.
+    }
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.top = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  document.execCommand('copy');
+  textarea.remove();
 }
 
 function buildMarkdownNavigation(blocks: MarkdownBlock[]) {
@@ -2940,7 +3077,7 @@ function PlanChangePage({
               <p>{plan.subtitle}</p>
             </div>
             <div className="upgrade-price">
-              <span>¥</span>
+              <span>￥</span>
               <strong>{plan.monthlyPriceYuan}</strong>
             </div>
             <p className="upgrade-billing">{t.monthlyBilling}</p>
