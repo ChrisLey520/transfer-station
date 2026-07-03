@@ -1015,7 +1015,7 @@ app.get('/api/keys/:id/secret', adminGuard, (req, res) => {
   }
 
   const endpoint = requestApiEndpoint(req);
-  const providerName = result.key.name || result.key.keyPreview;
+  const providerName = 'RelayHub';
 
   res.json({
     key: result.rawKey,
@@ -1041,7 +1041,7 @@ app.get('/api/user/keys/:id/secret', (req, res) => {
   }
 
   const endpoint = requestApiEndpoint(req);
-  const providerName = result.key.name || result.key.keyPreview;
+  const providerName = 'RelayHub';
   res.json({
     key: result.rawKey,
     keyPreview: result.key.keyPreview,
@@ -1421,7 +1421,7 @@ const clientDist = path.resolve(__dirname, '../dist/client');
 
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(clientDist));
-  app.get('*', (_req, res) => {
+  app.get(/.*/, (_req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 }

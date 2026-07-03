@@ -67,21 +67,11 @@ const upgradePlanCatalog = [
     id: 'pro',
     name: 'Pro',
     description: '入门版',
-    fiveHourTokenLimit: 1000,
-    weeklyTokenLimit: 6700,
-    priceCents: 500,
+    fiveHourTokenLimit: 2000,
+    weeklyTokenLimit: 14000,
+    priceCents: 6000,
     currency: 'CNY',
     rank: 1
-  },
-  {
-    id: 'pro-plus',
-    name: 'Pro+',
-    description: '标准版',
-    fiveHourTokenLimit: 2000,
-    weeklyTokenLimit: 13200,
-    priceCents: 1000,
-    currency: 'CNY',
-    rank: 2
   },
   {
     id: 'max',
@@ -89,9 +79,9 @@ const upgradePlanCatalog = [
     description: '专业版',
     fiveHourTokenLimit: 4000,
     weeklyTokenLimit: 26400,
-    priceCents: 2000,
+    priceCents: 11900,
     currency: 'CNY',
-    rank: 3
+    rank: 2
   },
   {
     id: 'ultra',
@@ -99,9 +89,9 @@ const upgradePlanCatalog = [
     description: '高级版',
     fiveHourTokenLimit: 20000,
     weeklyTokenLimit: 132000,
-    priceCents: 10000,
+    priceCents: 58000,
     currency: 'CNY',
-    rank: 4
+    rank: 3
   },
   {
     id: 'power',
@@ -109,9 +99,9 @@ const upgradePlanCatalog = [
     description: '旗舰版 · 团队与高强度工作量',
     fiveHourTokenLimit: 40000,
     weeklyTokenLimit: 264000,
-    priceCents: 20000,
+    priceCents: 115000,
     currency: 'CNY',
-    rank: 5
+    rank: 4
   }
 ];
 
@@ -130,6 +120,7 @@ export function seedDefaults() {
   const count = db.prepare('SELECT COUNT(*) as count FROM plans').get() as { count: number };
   if (count.count > 0) {
     ensureFreePlan();
+    syncUpgradePlanCatalog();
     normalizeLegacyPlanLimits();
     backfillUsageLogCosts();
     ensureDefaultUser();
@@ -179,6 +170,7 @@ export function seedDefaults() {
   const tx = db.transaction(() => plans.forEach((plan) => insertPlan.run(plan)));
   tx();
   ensureFreePlan();
+  syncUpgradePlanCatalog();
 
   const defaultUser = ensureDefaultUser();
   createKey({
@@ -249,6 +241,61 @@ function ensureFreePlan() {
     createdAt: timestamp,
     updatedAt: timestamp
   });
+}
+
+function syncUpgradePlanCatalog() {
+  const timestamp = nowIso();
+  const tx = db.transaction(() => {
+    for (const plan of upgradePlanCatalog) {
+      upsertPlan({
+        id: plan.id,
+        name: plan.name,
+        description: plan.description,
+        fiveHourTokenLimit: plan.fiveHourTokenLimit,
+        weeklyTokenLimit: plan.weeklyTokenLimit,
+        priceCents: plan.priceCents,
+        currency: plan.currency,
+        isActive: true
+      });
+    }
+
+    const proPlan = upgradePlanCatalog.find((plan) => plan.id === 'pro')!;
+    db.prepare(`
+      UPDATE account_state
+      SET current_plan_id = @planId,
+          current_plan_name = @planName,
+          current_plan_rank = @planRank,
+          updated_at = @updatedAt
+      WHERE current_plan_id = 'pro-plus'
+    `).run({
+      planId: proPlan.id,
+      planName: proPlan.name,
+      planRank: proPlan.rank,
+      updatedAt: timestamp
+    });
+
+    db.prepare("UPDATE api_keys SET plan_id = @planId WHERE plan_id = 'pro-plus'").run({ planId: proPlan.id });
+
+    db.prepare(`
+      UPDATE gift_cards
+      SET plan_id = @planId,
+          plan_name = @planName,
+          five_hour_token_limit = @fiveHourTokenLimit,
+          weekly_token_limit = @weeklyTokenLimit,
+          plan_rank = @planRank
+      WHERE plan_id = 'pro-plus'
+    `).run({
+      planId: proPlan.id,
+      planName: proPlan.name,
+      fiveHourTokenLimit: proPlan.fiveHourTokenLimit,
+      weeklyTokenLimit: proPlan.weeklyTokenLimit,
+      planRank: proPlan.rank
+    });
+
+    db.prepare("UPDATE plans SET is_active = 0, updated_at = @updatedAt WHERE id = 'pro-plus'").run({ updatedAt: timestamp });
+  });
+
+  tx();
 }
 
 function mapUser(row: any): User {
