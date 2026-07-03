@@ -10,9 +10,9 @@
 ## Run Locally
 
 ```bash
-npm install
+pnpm install
 cp .env.example .env
-npm run dev
+pnpm run dev
 ```
 
 管理台：
@@ -41,9 +41,10 @@ ANTHROPIC_VERSION=2023-06-01
 
 ```bash
 ADMIN_TOKEN=your-admin-token
+ADMIN_EMAILS=demo@example.com
 ```
 
-设置后，管理台 API 需要 `x-admin-token`。不设置时为本地开发模式。
+普通用户注册后身份为会员。`ADMIN_EMAILS` 中的邮箱会在启动时标记为管理员，内置演示账号 `demo@example.com / demo123456` 默认为管理员。管理台 API 支持管理员登录态访问，也兼容设置 `ADMIN_TOKEN` 后使用 `x-admin-token` 访问。
 
 ## Claude Code Proxy Endpoint
 
