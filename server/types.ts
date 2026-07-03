@@ -1,5 +1,16 @@
 export type Language = 'zh-CN' | 'zh-TW' | 'en';
 
+export type UserRole = 'admin' | 'member';
+
+export type User = {
+  id: string;
+  email: string;
+  role: UserRole;
+  displayName: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type Plan = {
   id: string;
   name: string;
@@ -19,6 +30,7 @@ export type ApiKeyRecord = {
   keyHash: string;
   keyPreview: string;
   keyCiphertext: string | null;
+  userId: string | null;
   planId: string;
   status: 'active' | 'paused' | 'revoked';
   ownerEmail: string | null;
@@ -78,3 +90,22 @@ export type AnthropicUsage = {
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
 };
+
+export type GiftCardType = 'credit' | 'plan';
+
+export type GiftCard = {
+  code: string;
+  type: GiftCardType;
+  amountCents: number;
+  planId: string | null;
+  planName: string | null;
+  fiveHourTokenLimit: number;
+  weeklyTokenLimit: number;
+  planRank: number;
+  durationMonths: number;
+  redeemedAt: string | null;
+  redeemedByUserId: string | null;
+  createdAt: string;
+};
+
+export type GiftCardConsequence = 'credit' | 'upgrade' | 'extend';
