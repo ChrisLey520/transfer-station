@@ -7,37 +7,67 @@ import { deflateSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { initDb } from './db.js';
 import {
+  addUpstreamChannelKey,
   assertQuota,
+  claimTaobaoOrderGiftCards,
   createKey,
+  createGiftCards,
   createUsageLog,
+  deleteTaobaoProductMapping,
+  deleteUpstreamChannel,
+  deleteUpstreamChannelKey,
+  deleteUpstreamModelRate,
   getAccountState,
   getFirstAdminUser,
   getPlan,
   getRawKeyById,
   getKeyByRawKey,
+  getTaobaoShop,
   getUserBySessionToken,
   loginUser,
+  hasAvailableUpstreamChannels,
+  listGiftCards,
   listKeys,
+  listClaimedPlatformOrdersForUser,
+  listPlatformOrders,
   listPlans,
+  listProductLinks,
+  listTaobaoProductMappings,
+  listTaobaoShops,
+  listUpstreamChannels,
+  listUpstreamSelections,
   listUsageLogs,
+  markUpstreamGroupFailure,
+  markUpstreamKeyFailure,
   previewGiftCard,
   pruneUsageLogs,
   redeemGiftCard,
+  revokeGiftCard,
   registerUser,
   revokeKey,
+  resolveUpstreamRates,
   seedDefaults,
+  saveTaobaoShop,
   touchKey,
+  touchUpstreamKey,
   updateKey,
+  updateUpstreamChannelKey,
+  updateProductLinks,
+  markTaobaoShopMessagePermitted,
+  upsertTaobaoProductMapping,
+  upsertUpstreamChannel,
+  upsertUpstreamModelRate,
   upsertPlan,
   usageSummaryForUser
 } from './store.js';
-import type { AnthropicUsage, KeyWithPlan, User } from './types.js';
-import { usageCostCents } from './pricing.js';
+import { decryptKey, encryptKey } from './crypto.js';
+import type { AgentType, AnthropicUsage, KeyWithPlan, UpstreamSelection, User } from './types.js';
+import { usageCostCents, type UsageRates } from './pricing.js';
+import { exchangeTaobaoAuthCode, permitTaobaoTmcUser } from './taobao.js';
 import { z } from 'zod';
 
 const app = express();
 const port = Number(process.env.PORT || 8787);
-const upstreamBaseUrl = (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/$/, '');
 const anthropicVersion = process.env.ANTHROPIC_VERSION || '2023-06-01';
 const sliderChallengeTtlMs = 5 * 60 * 1000;
 const sliderTokenTtlMs = 2 * 60 * 1000;
@@ -46,6 +76,11 @@ const puzzleImageHeight = 150;
 const puzzlePieceSize = 44;
 const puzzleTolerancePct = 2.5;
 const ccSwitchUsageAutoIntervalMinutes = 5;
+const upstreamHealthProbeTimeoutMs = Number(process.env.UPSTREAM_HEALTH_PROBE_TIMEOUT_MS || 30_000);
+const claudeHealthProbeModel = process.env.CLAUDE_HEALTH_PROBE_MODEL || 'claude-sonnet-4-6';
+const codexHealthProbeModel = process.env.CODEX_HEALTH_PROBE_MODEL || 'gpt-5.5';
+const healthProbePrompt = 'Reply OK.';
+const healthProbeMaxOutputTokens = 8;
 
 type AuthPurpose = 'login' | 'register';
 
@@ -388,13 +423,23 @@ function authUser(req: Request, res: Response): User | null {
   return user;
 }
 
-function getClientKey(req: Request) {
+function getClientKey(req: Request, options: { allowQuery?: boolean } = {}) {
   const authorization = req.header('authorization');
   if (authorization?.toLowerCase().startsWith('bearer ')) {
     return authorization.slice('bearer '.length).trim();
   }
 
-  return req.header('x-api-key') || '';
+  const headerKey = req.header('x-api-key');
+  if (headerKey) return headerKey;
+
+  if (options.allowQuery) {
+    const queryKey = routeParam(req.query.apiKey as string | string[] | undefined)
+      || routeParam(req.query.api_key as string | string[] | undefined)
+      || routeParam(req.query.key as string | string[] | undefined);
+    if (queryKey) return queryKey;
+  }
+
+  return '';
 }
 
 function authProxyKey(req: Request, res: Response): KeyWithPlan | null {
@@ -418,8 +463,8 @@ function authProxyKey(req: Request, res: Response): KeyWithPlan | null {
   return key;
 }
 
-function authStatusKey(req: Request, res: Response): KeyWithPlan | null {
-  const rawKey = getClientKey(req);
+function authStatusKey(req: Request, res: Response, options: { allowQuery?: boolean } = {}): KeyWithPlan | null {
+  const rawKey = getClientKey(req, options);
   if (!rawKey) {
     res.status(401).json({ ok: false, error: 'API key is required' });
     return null;
@@ -439,29 +484,42 @@ function authStatusKey(req: Request, res: Response): KeyWithPlan | null {
   return key;
 }
 
-function getTokenUsage(payload: unknown) {
+function getTokenUsage(payload: unknown, rates: UsageRates = {}, usageMultiplier = 1) {
   const usage = payload && typeof payload === 'object' && 'usage' in payload ? (payload as any).usage : undefined;
-  return normalizeUsage(usage);
+  return normalizeUsage(usage, rates, usageMultiplier);
 }
 
-function normalizeUsage(usage: AnthropicUsage | undefined) {
-  const inputTokens = Number(usage?.input_tokens ?? 0);
-  const outputTokens = Number(usage?.output_tokens ?? 0);
-  const cacheCreationInputTokens = Number(usage?.cache_creation_input_tokens ?? 0);
-  const cacheReadInputTokens = Number(usage?.cache_read_input_tokens ?? 0);
+function scaleTokenCount(value: number, multiplier = 1) {
+  return Math.max(0, Math.round(value * Math.max(1, multiplier || 1)));
+}
+
+function normalizeUsage(usage: AnthropicUsage | undefined, rates: UsageRates = {}, usageMultiplier = 1) {
+  const inputTokenDetails = (usage as any)?.input_tokens_details || (usage as any)?.prompt_tokens_details;
+  const outputTokenDetails = (usage as any)?.output_tokens_details || (usage as any)?.completion_tokens_details;
+  const cachedTokens = Number(inputTokenDetails?.cached_tokens ?? inputTokenDetails?.cache_read_input_tokens ?? 0);
+  const rawInputTokens = Number((usage as any)?.input_tokens ?? (usage as any)?.prompt_tokens ?? 0);
+  const inputTokens = scaleTokenCount(Math.max(0, rawInputTokens - cachedTokens), usageMultiplier);
+  const outputTokens = scaleTokenCount(Number((usage as any)?.output_tokens ?? (usage as any)?.completion_tokens ?? 0), usageMultiplier);
+  const cacheCreationInputTokens = scaleTokenCount(
+    Number((usage as any)?.cache_creation_input_tokens ?? inputTokenDetails?.cache_creation_input_tokens ?? 0),
+    usageMultiplier
+  );
+  const cacheReadInputTokens = scaleTokenCount(Number((usage as any)?.cache_read_input_tokens ?? cachedTokens ?? 0), usageMultiplier);
+  const reasoningTokens = scaleTokenCount(Number(outputTokenDetails?.reasoning_tokens ?? 0), usageMultiplier);
+  const billedOutputTokens = outputTokens + reasoningTokens;
   const costs = usageCostCents({
     inputTokens,
-    outputTokens,
+    outputTokens: billedOutputTokens,
     cacheCreationInputTokens,
     cacheReadInputTokens
-  });
+  }, rates);
 
   return {
     inputTokens,
-    outputTokens,
+    outputTokens: billedOutputTokens,
     cacheCreationInputTokens,
     cacheReadInputTokens,
-    totalTokens: inputTokens + outputTokens + cacheCreationInputTokens + cacheReadInputTokens,
+    totalTokens: inputTokens + billedOutputTokens + cacheCreationInputTokens + cacheReadInputTokens,
     ...costs
   };
 }
@@ -477,9 +535,10 @@ function requestOrigin(req: Request) {
   return `${protocol}://${host}`;
 }
 
-function requestApiEndpoint(req: Request) {
+function requestAgentApiEndpoint(req: Request, agent: 'claude' | 'codex') {
   const origin = requestOrigin(req);
-  return origin.endsWith('/v1') ? origin : `${origin}/v1`;
+  const segment = agent === 'claude' ? 'claude-code' : 'codex';
+  return `${origin}/${segment}/v1`;
 }
 
 function centsToAmount(cents: number) {
@@ -492,20 +551,245 @@ function keyCurrency(key: KeyWithPlan) {
   return plan?.currency || 'CNY';
 }
 
+function upstreamConfigured() {
+  return hasAvailableUpstreamChannels('claude-code') || hasAvailableUpstreamChannels('codex');
+}
+
+function routeToUpstreamPath(req: Request) {
+  const pathValue = req.originalUrl;
+  if (pathValue.startsWith('/claude-code/v1')) return `/v1${pathValue.slice('/claude-code/v1'.length)}`;
+  if (pathValue.startsWith('/codex/v1')) return `/v1${pathValue.slice('/codex/v1'.length)}`;
+  return '/v1';
+}
+
+function buildUpstreamHeaders(req: Request | null, selection: UpstreamSelection) {
+  const headers = new Headers();
+  headers.set('content-type', 'application/json');
+
+  if (selection.agent === 'claude-code') {
+    headers.set('x-api-key', selection.rawKey);
+    headers.set('anthropic-version', req?.header('anthropic-version') || anthropicVersion);
+    const betaHeader = req?.header('anthropic-beta');
+    if (betaHeader) headers.set('anthropic-beta', betaHeader);
+    return headers;
+  }
+
+  headers.set('authorization', `Bearer ${selection.rawKey}`);
+  const openAiOrg = req?.header('openai-organization');
+  const openAiProject = req?.header('openai-project');
+  if (openAiOrg) headers.set('openai-organization', openAiOrg);
+  if (openAiProject) headers.set('openai-project', openAiProject);
+  return headers;
+}
+
+function parseJsonText(text: string) {
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return {};
+  }
+}
+
+function scaledTokenValue(value: unknown, multiplier: number) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return value;
+  return Math.max(0, Math.round(value * multiplier));
+}
+
+function scaleUsageObject(usage: unknown, multiplier: number) {
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return;
+  const record = usage as Record<string, unknown>;
+  const tokenKeys = [
+    'input_tokens',
+    'output_tokens',
+    'cache_creation_input_tokens',
+    'cache_read_input_tokens',
+    'total_tokens',
+    'inputTokens',
+    'outputTokens',
+    'cacheCreationInputTokens',
+    'cacheReadInputTokens',
+    'totalTokens',
+    'prompt_tokens',
+    'completion_tokens',
+    'total_tokens',
+    'promptTokens',
+    'completionTokens'
+  ];
+  for (const key of tokenKeys) {
+    if (key in record) record[key] = scaledTokenValue(record[key], multiplier);
+  }
+
+  for (const [key, value] of Object.entries(record)) {
+    if (value && typeof value === 'object') {
+      scaleUsageObject(value, multiplier);
+      continue;
+    }
+    if (/tokens?/i.test(key)) record[key] = scaledTokenValue(value, multiplier);
+  }
+}
+
+function scaleUsageInPayload(payload: unknown, multiplier: number) {
+  if (multiplier === 1 || !payload || typeof payload !== 'object') return payload;
+  const cloned = structuredClone(payload);
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+
+    const record = value as Record<string, unknown>;
+    if ('usage' in record) scaleUsageObject(record.usage, multiplier);
+    if ('message' in record && record.message && typeof record.message === 'object') {
+      const message = record.message as Record<string, unknown>;
+      if ('usage' in message) scaleUsageObject(message.usage, multiplier);
+    }
+    Object.values(record).forEach(visit);
+  };
+  visit(cloned);
+  return cloned;
+}
+
+function rewriteJsonUsageText(text: string, multiplier: number) {
+  if (!text) return { text, payload: {} };
+  if (multiplier === 1) return { text, payload: parseJsonText(text) };
+  const payload = parseJsonText(text);
+  const scaledPayload = scaleUsageInPayload(payload, multiplier);
+  return {
+    text: JSON.stringify(scaledPayload),
+    payload: scaledPayload
+  };
+}
+
+function scaleSseChunk(chunkText: string, multiplier: number) {
+  if (multiplier === 1) return chunkText;
+  return chunkText
+    .split('\n')
+    .map((line) => {
+      if (!line.startsWith('data:')) return line;
+      const prefix = line.match(/^data:\s?/)?.[0] || 'data: ';
+      const data = line.slice(prefix.length);
+      if (!data || data === '[DONE]') return line;
+      try {
+        return `${prefix}${JSON.stringify(scaleUsageInPayload(JSON.parse(data), multiplier))}`;
+      } catch {
+        return line;
+      }
+    })
+    .join('\n');
+}
+
+function upstreamErrorMessage(payload: unknown, fallback: string) {
+  const error = payload && typeof payload === 'object' && 'error' in payload ? (payload as any).error : null;
+  if (typeof error === 'string') return error;
+  if (error?.message) return String(error.message);
+  if (payload && typeof payload === 'object' && 'message' in payload && (payload as any).message) {
+    return String((payload as any).message);
+  }
+  return fallback;
+}
+
+function parseRetryValue(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  const now = Date.now();
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return null;
+    if (value > 1_000_000_000_000) return new Date(value).toISOString();
+    if (value > 1_000_000_000) return new Date(value * 1000).toISOString();
+    return new Date(now + value * 1000).toISOString();
+  }
+
+  const text = String(value).trim();
+  if (!text) return null;
+  if (/^\d+(\.\d+)?$/.test(text)) return parseRetryValue(Number(text));
+
+  const duration = text.match(/^(\d+(?:\.\d+)?)(ms|s|m|h)$/i);
+  if (duration) {
+    const amount = Number(duration[1]);
+    const unit = duration[2].toLowerCase();
+    const multiplier = unit === 'ms' ? 1 : unit === 's' ? 1000 : unit === 'm' ? 60_000 : 3_600_000;
+    return new Date(now + amount * multiplier).toISOString();
+  }
+
+  const parsed = Date.parse(text);
+  if (Number.isFinite(parsed) && parsed > now) return new Date(parsed).toISOString();
+  return null;
+}
+
+function nestedValue(source: unknown, pathValue: string) {
+  return pathValue.split('.').reduce<unknown>((value, key) => {
+    if (!value || typeof value !== 'object') return undefined;
+    return (value as Record<string, unknown>)[key];
+  }, source);
+}
+
+function recoveryUntilFromUpstream(headers: Headers, payload: unknown) {
+  const headerNames = [
+    'retry-after',
+    'x-ratelimit-reset',
+    'x-ratelimit-reset-requests',
+    'x-ratelimit-reset-tokens',
+    'x-rate-limit-reset',
+    'x-quota-reset'
+  ];
+  for (const name of headerNames) {
+    const parsed = parseRetryValue(headers.get(name));
+    if (parsed) return parsed;
+  }
+
+  const jsonPaths = [
+    'retry_after',
+    'retryAfter',
+    'retry_after_ms',
+    'reset_at',
+    'resetAt',
+    'resets_at',
+    'quota_reset_at',
+    'error.retry_after',
+    'error.retryAfter',
+    'error.retry_after_ms',
+    'error.reset_at',
+    'error.resetAt',
+    'error.resets_at'
+  ];
+  for (const pathValue of jsonPaths) {
+    const value = nestedValue(payload, pathValue);
+    if (pathValue.endsWith('_ms') && typeof value === 'number') {
+      const parsed = parseRetryValue(value / 1000);
+      if (parsed) return parsed;
+      continue;
+    }
+    const parsed = parseRetryValue(value);
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
+function isKeyLevelFailure(statusCode: number, message: string) {
+  if (statusCode === 402 || statusCode === 429) return true;
+  const normalized = message.toLowerCase();
+  return /\b(quota|credit|balance|exhaust|insufficient|rate limit|billing)\b/.test(normalized);
+}
+
+function isGroupLevelFailure(statusCode: number) {
+  return statusCode >= 500;
+}
+
 function buildKeyHealth(key: KeyWithPlan) {
   const quotaCheck = assertQuota(key);
-  const upstreamConfigured = Boolean(process.env.ANTHROPIC_API_KEY);
-  const ok = upstreamConfigured && quotaCheck.ok;
+  const configured = upstreamConfigured();
+  const ok = configured && quotaCheck.ok;
 
   return {
     ok,
-    status: ok ? 'healthy' : upstreamConfigured ? 'quota_exceeded' : 'configuration_error',
+    status: ok ? 'healthy' : configured ? 'quota_exceeded' : 'configuration_error',
     message: ok
       ? 'Key is ready'
-      : upstreamConfigured
+      : configured
         ? quotaCheck.message
-        : 'ANTHROPIC_API_KEY is not configured',
-    upstreamConfigured,
+        : 'No upstream channel is available',
+    upstreamConfigured: configured,
     key: {
       id: key.id,
       name: key.name,
@@ -513,6 +797,202 @@ function buildKeyHealth(key: KeyWithPlan) {
       status: key.status
     },
     quota: quotaCheck.quota,
+    now: new Date().toISOString()
+  };
+}
+
+function healthProbeSpec(agent: AgentType) {
+  if (agent === 'claude-code') {
+    return {
+      path: '/v1/messages',
+      model: claudeHealthProbeModel,
+      body: {
+        model: claudeHealthProbeModel,
+        max_tokens: healthProbeMaxOutputTokens,
+        messages: [{ role: 'user', content: healthProbePrompt }]
+      }
+    };
+  }
+
+  return {
+    path: '/v1/responses',
+    model: codexHealthProbeModel,
+    body: {
+      model: codexHealthProbeModel,
+      input: healthProbePrompt,
+      max_output_tokens: healthProbeMaxOutputTokens
+    }
+  };
+}
+
+function extractHealthProbeReply(agent: AgentType, payload: unknown) {
+  if (!payload || typeof payload !== 'object') return '';
+  const record = payload as Record<string, unknown>;
+
+  if (agent === 'claude-code') {
+    const content = record.content;
+    if (typeof content === 'string') return content.trim();
+    if (Array.isArray(content)) {
+      return content
+        .map((part) => {
+          if (!part || typeof part !== 'object') return '';
+          const text = (part as Record<string, unknown>).text;
+          return typeof text === 'string' ? text : '';
+        })
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+    }
+    return '';
+  }
+
+  if (typeof record.output_text === 'string') return record.output_text.trim();
+  if (!Array.isArray(record.output)) return '';
+  return record.output
+    .flatMap((item) => {
+      if (!item || typeof item !== 'object') return [];
+      const content = (item as Record<string, unknown>).content;
+      if (!Array.isArray(content)) return [];
+      return content.map((part) => {
+        if (!part || typeof part !== 'object') return '';
+        const value = part as Record<string, unknown>;
+        const text = value.text || value.content || value.value;
+        return typeof text === 'string' ? text : '';
+      });
+    })
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+}
+
+async function probeKeyHealth(key: KeyWithPlan, agent: AgentType) {
+  const startedAt = Date.now();
+  const quotaCheck = assertQuota(key);
+  const selections = listUpstreamSelections(agent);
+  const spec = healthProbeSpec(agent);
+  const attempts: Array<{
+    upstream: string;
+    statusCode: number | null;
+    ok: boolean;
+    latencyMs: number;
+    message: string;
+    requestId: string | null;
+  }> = [];
+
+  if (!selections.length) {
+    return {
+      ok: false,
+      status: 'configuration_error',
+      message: `No upstream channel is available for ${agent}`,
+      upstreamConfigured: upstreamConfigured(),
+      key: {
+        id: key.id,
+        name: key.name,
+        preview: key.keyPreview,
+        status: key.status
+      },
+      probe: {
+        agent,
+        model: spec.model,
+        promptTokenBudget: 'fixed-minimal',
+        maxOutputTokens: healthProbeMaxOutputTokens,
+        attempts
+      },
+      quota: quotaCheck.quota,
+      quotaOk: quotaCheck.ok,
+      now: new Date().toISOString()
+    };
+  }
+
+  for (const selection of selections) {
+    const attemptStartedAt = Date.now();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), upstreamHealthProbeTimeoutMs);
+    try {
+      const upstream = await fetch(`${selection.apiUrl}${spec.path}`, {
+        method: 'POST',
+        headers: buildUpstreamHeaders(null, selection),
+        body: JSON.stringify(spec.body),
+        signal: controller.signal
+      });
+      touchUpstreamKey(selection.key.id);
+      const text = await upstream.text();
+      const payload = parseJsonText(text);
+      const requestId = upstream.headers.get('request-id') || upstream.headers.get('x-request-id');
+      const reply = upstream.ok ? extractHealthProbeReply(agent, payload) : '';
+      const errorMessage = upstreamErrorMessage(payload, upstream.statusText);
+      const attempt = {
+        upstream: selection.group.name,
+        statusCode: upstream.status,
+        ok: upstream.ok && Boolean(reply),
+        latencyMs: Date.now() - attemptStartedAt,
+        message: upstream.ok && reply ? 'Probe response received' : errorMessage || 'Probe did not return a text response',
+        requestId
+      };
+      attempts.push(attempt);
+
+      if (attempt.ok) {
+        return {
+          ok: true,
+          status: 'healthy',
+          message: 'Upstream probe succeeded',
+          upstreamConfigured: true,
+          key: {
+            id: key.id,
+            name: key.name,
+            preview: key.keyPreview,
+            status: key.status
+          },
+          probe: {
+            agent,
+            model: spec.model,
+            upstream: selection.group.name,
+            responseStatusCode: upstream.status,
+            responseTimeMs: Date.now() - startedAt,
+            requestId,
+            promptTokenBudget: 'fixed-minimal',
+            maxOutputTokens: healthProbeMaxOutputTokens
+          },
+          quota: quotaCheck.quota,
+          quotaOk: quotaCheck.ok,
+          now: new Date().toISOString()
+        };
+      }
+    } catch (error) {
+      attempts.push({
+        upstream: selection.group.name,
+        statusCode: null,
+        ok: false,
+        latencyMs: Date.now() - attemptStartedAt,
+        message: error instanceof Error ? error.message : 'Probe request failed',
+        requestId: null
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return {
+    ok: false,
+    status: 'upstream_unavailable',
+    message: 'All upstream health probes failed',
+    upstreamConfigured: true,
+    key: {
+      id: key.id,
+      name: key.name,
+      preview: key.keyPreview,
+      status: key.status
+    },
+    probe: {
+      agent,
+      model: spec.model,
+      responseTimeMs: Date.now() - startedAt,
+      promptTokenBudget: 'fixed-minimal',
+      maxOutputTokens: healthProbeMaxOutputTokens,
+      attempts
+    },
+    quota: quotaCheck.quota,
+    quotaOk: quotaCheck.ok,
     now: new Date().toISOString()
   };
 }
@@ -643,6 +1123,7 @@ function buildCcSwitchUsageScript() {
 }
 
 function buildCcSwitchProviderLink(appName: 'claude' | 'codex', name: string, endpoint: string, apiKey: string) {
+  const healthUrl = `${endpoint}/key/health`;
   const params = new URLSearchParams({
     resource: 'provider',
     app: appName,
@@ -654,7 +1135,10 @@ function buildCcSwitchProviderLink(appName: 'claude' | 'codex', name: string, en
     usageScript: Buffer.from(buildCcSwitchUsageScript(), 'utf8').toString('base64'),
     usageApiKey: apiKey,
     usageBaseUrl: endpoint,
-    usageAutoInterval: String(ccSwitchUsageAutoIntervalMinutes)
+    usageAutoInterval: String(ccSwitchUsageAutoIntervalMinutes),
+    healthUrl,
+    healthCheckUrl: healthUrl,
+    healthApiKey: apiKey
   });
   return `ccswitch://v1/import?${params.toString()}`;
 }
@@ -667,12 +1151,16 @@ function writeProxyLog(input: {
   statusCode: number;
   startedAt: number;
   usage?: AnthropicUsage;
+  usageSource?: 'plan' | 'balance' | 'none';
+  rates?: UsageRates;
+  usageMultiplier?: number;
   errorMessage?: string | null;
   requestId: string;
 }) {
-  const usage = normalizeUsage(input.usage);
+  const usage = normalizeUsage(input.usage, input.rates, input.usageMultiplier);
   createUsageLog({
     apiKeyId: input.key?.id ?? null,
+    usageSource: input.usageSource || 'plan',
     model: input.model || 'unknown',
     path: input.path,
     method: input.method,
@@ -696,7 +1184,7 @@ function writeProxyLog(input: {
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    upstreamConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
+    upstreamConfigured: upstreamConfigured(),
     now: new Date().toISOString()
   });
 });
@@ -841,6 +1329,7 @@ app.get('/api/bootstrap', (req, res) => {
     account: getAccountState(user.id),
     summary: usageSummaryForUser(user.id),
     plans: listPlans(),
+    productLinks: listProductLinks(),
     keys: listKeys(user.id)
   });
 });
@@ -868,6 +1357,484 @@ app.post('/api/plans', adminGuard, (req, res) => {
   }
 
   res.json({ plan: upsertPlan(parsed.data) });
+});
+
+app.get('/api/product-links', (req, res) => {
+  const user = authUser(req, res);
+  if (!user) return;
+  res.json({ productLinks: listProductLinks() });
+});
+
+app.patch('/api/product-links', adminGuard, (req, res) => {
+  const schema = z.object({
+    productLinks: z.array(
+      z.object({
+        itemType: z.enum(['plan', 'credit']),
+        itemId: z.string().min(1),
+        channel: z.enum(['taobao', 'xianyu']),
+        url: z.string().url()
+      })
+    )
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    res.json({ productLinks: updateProductLinks(parsed.data.productLinks) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to save product links' });
+  }
+});
+
+app.get('/api/taobao/shops', adminGuard, (_req, res) => {
+  res.json({ shops: listTaobaoShops() });
+});
+
+app.post('/api/taobao/shops', adminGuard, (req, res) => {
+  const schema = z.object({
+    id: z.string().min(1),
+    nick: z.string().optional(),
+    sessionKey: z.string().min(1),
+    sessionExpiresAt: z.string().nullable().optional()
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const shop = saveTaobaoShop({
+    id: parsed.data.id,
+    nick: parsed.data.nick,
+    sessionCiphertext: encryptKey(parsed.data.sessionKey),
+    sessionExpiresAt: parsed.data.sessionExpiresAt || null
+  });
+  res.status(201).json({ shop, shops: listTaobaoShops() });
+});
+
+app.get('/api/taobao/oauth/callback', async (req, res) => {
+  const schema = z.object({
+    code: z.string().min(1),
+    state: z.string().optional()
+  });
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const expectedState = process.env.TAOBAO_OAUTH_STATE || process.env.ADMIN_TOKEN || '';
+  if (!expectedState || parsed.data.state !== expectedState) {
+    res.status(403).json({ error: '淘宝授权 state 不匹配。' });
+    return;
+  }
+
+  try {
+    const token = await exchangeTaobaoAuthCode(parsed.data.code, process.env.TAOBAO_REDIRECT_URI);
+    const shop = saveTaobaoShop({
+      id: String(token.taobao_user_id || token.taobao_user_nick || 'default'),
+      nick: token.taobao_user_nick || '',
+      sessionCiphertext: encryptKey(token.access_token),
+      sessionExpiresAt: token.expires_in ? new Date(Date.now() + token.expires_in * 1000).toISOString() : null
+    });
+    res.json({ ok: true, shop });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : '淘宝授权失败。' });
+  }
+});
+
+app.post('/api/taobao/shops/:id/permit', adminGuard, async (req, res) => {
+  const shop = getTaobaoShop(routeParam(req.params.id));
+  const session = shop ? decryptKey(shop.sessionCiphertext) : null;
+  if (!shop || !session) {
+    res.status(404).json({ error: '淘宝店铺授权不存在或不可解密。' });
+    return;
+  }
+
+  const schema = z.object({
+    topics: z.array(z.string().min(1)).optional()
+  });
+  const parsed = schema.safeParse(req.body || {});
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const permitted = await permitTaobaoTmcUser(session, parsed.data.topics);
+    if (!permitted) throw new Error('淘宝 TMC 开通未返回成功状态。');
+    res.json({ shop: markTaobaoShopMessagePermitted(shop.id), shops: listTaobaoShops() });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : '淘宝消息开通失败。' });
+  }
+});
+
+app.get('/api/taobao/product-mappings', adminGuard, (_req, res) => {
+  res.json({ mappings: listTaobaoProductMappings() });
+});
+
+app.post('/api/taobao/product-mappings', adminGuard, (req, res) => {
+  const schema = z.discriminatedUnion('giftType', [
+    z.object({
+      id: z.string().optional(),
+      numIid: z.string().min(1),
+      skuId: z.string().nullable().optional(),
+      title: z.string().optional(),
+      giftType: z.literal('credit'),
+      amountCents: z.coerce.number().int().positive(),
+      quantity: z.coerce.number().int().min(1).max(20).default(1),
+      isActive: z.boolean().optional()
+    }),
+    z.object({
+      id: z.string().optional(),
+      numIid: z.string().min(1),
+      skuId: z.string().nullable().optional(),
+      title: z.string().optional(),
+      giftType: z.literal('plan'),
+      planId: z.string().min(1),
+      durationMonths: z.coerce.number().int().min(1).max(36).default(1),
+      quantity: z.coerce.number().int().min(1).max(20).default(1),
+      isActive: z.boolean().optional()
+    })
+  ]);
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    res.status(201).json({ mappings: upsertTaobaoProductMapping(parsed.data) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : '保存淘宝商品映射失败。' });
+  }
+});
+
+app.delete('/api/taobao/product-mappings/:id', adminGuard, (req, res) => {
+  const mapping = deleteTaobaoProductMapping(routeParam(req.params.id));
+  if (!mapping) {
+    res.status(404).json({ error: '淘宝商品映射不存在。' });
+    return;
+  }
+  res.json({ mapping, mappings: listTaobaoProductMappings() });
+});
+
+app.get('/api/taobao/orders', adminGuard, (req, res) => {
+  const schema = z.object({ limit: z.coerce.number().int().positive().max(500).default(100) });
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  res.json({ orders: listPlatformOrders(parsed.data.limit) });
+});
+
+app.post('/api/user/orders/claim', (req, res) => {
+  const user = authUser(req, res);
+  if (!user) return;
+  const schema = z.object({ orderId: z.string().min(6) });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const orders = claimTaobaoOrderGiftCards(parsed.data.orderId, user.id);
+    if (!orders.length) {
+      res.status(404).json({ error: '订单未找到或兑换码尚未生成，请确认付款后稍后再试。' });
+      return;
+    }
+
+    res.json({
+      orders: orders.map((order) => ({
+        orderId: order.orderId,
+        subOrderId: order.subOrderId,
+        platform: order.platform,
+        title: order.title,
+        giftCardCode: order.giftCardCode,
+        deliveryStatus: order.deliveryStatus,
+        claimedAt: order.claimedAt,
+        updatedAt: order.updatedAt
+      }))
+    });
+  } catch (error) {
+    if (error instanceof Error && 'statusCode' in error) {
+      res.status((error as any).statusCode || 400).json({ error: error.message });
+      return;
+    }
+    res.status(400).json({ error: error instanceof Error ? error.message : '领取兑换码失败。' });
+  }
+});
+
+app.get('/api/user/orders/claims', (req, res) => {
+  const user = authUser(req, res);
+  if (!user) return;
+  const schema = z.object({ days: z.coerce.number().int().positive().max(30).default(30) });
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const orders = listClaimedPlatformOrdersForUser(user.id, parsed.data.days);
+  res.json({
+    orders: orders.map((order) => ({
+      orderId: order.orderId,
+      subOrderId: order.subOrderId,
+      platform: order.platform,
+      title: order.title,
+      giftCardCode: order.giftCardCode,
+      deliveryStatus: order.deliveryStatus,
+      claimedAt: order.claimedAt,
+      updatedAt: order.updatedAt
+    }))
+  });
+});
+
+app.get('/api/gift-cards', adminGuard, (req, res) => {
+  const schema = z.object({
+    type: z.enum(['plan', 'credit']).optional(),
+    page: z.coerce.number().int().positive().default(1),
+    pageSize: z.coerce.number().int().positive().max(100).default(20)
+  });
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  res.json(listGiftCards(parsed.data));
+});
+
+app.post('/api/gift-cards', adminGuard, (req, res) => {
+  const schema = z.discriminatedUnion('type', [
+    z.object({
+      type: z.literal('credit'),
+      amountCents: z.coerce.number().int().positive(),
+      quantity: z.coerce.number().int().min(1).max(200).default(1),
+      prefix: z.string().optional()
+    }),
+    z.object({
+      type: z.literal('plan'),
+      planId: z.string().min(1),
+      durationMonths: z.coerce.number().int().min(1).max(36).default(1),
+      quantity: z.coerce.number().int().min(1).max(200).default(1),
+      prefix: z.string().optional()
+    })
+  ]);
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const adminUser = res.locals.adminUser as User | undefined;
+    const giftCards = createGiftCards({
+      ...parsed.data,
+      createdByUserId: adminUser?.id || null
+    });
+    res.status(201).json({ giftCards });
+  } catch (error) {
+    if (error instanceof Error && 'statusCode' in error) {
+      res.status((error as any).statusCode || 400).json({ error: error.message });
+      return;
+    }
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to create gift cards' });
+  }
+});
+
+app.patch('/api/gift-cards/:code/revoke', adminGuard, (req, res) => {
+  try {
+    const adminUser = res.locals.adminUser as User | undefined;
+    const giftCard = revokeGiftCard(routeParam(req.params.code), adminUser?.id || null);
+    res.json({ giftCard, giftCards: listGiftCards({ page: 1, pageSize: 20 }) });
+  } catch (error) {
+    if (error instanceof Error && 'statusCode' in error) {
+      res.status((error as any).statusCode || 400).json({ error: error.message });
+      return;
+    }
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to revoke gift card' });
+  }
+});
+
+const upstreamChannelSchema = z.object({
+  id: z.string().min(1).optional(),
+  name: z.string().min(1),
+  status: z.enum(['active', 'paused']).optional(),
+  claudeApiUrl: z.string().url(),
+  codexApiUrl: z.string().url(),
+  useIndependentAgentKeys: z.boolean().optional(),
+  inputRatePerMillion: z.coerce.number().nonnegative().optional(),
+  outputRatePerMillion: z.coerce.number().nonnegative().optional(),
+  cacheCreationRatePerMillion: z.coerce.number().nonnegative().optional(),
+  cacheReadRatePerMillion: z.coerce.number().nonnegative().optional(),
+  serverErrorRecoveryMinutes: z.coerce.number().int().min(5).max(300).optional(),
+  displayUsageMultiplier: z.coerce.number().min(1).optional(),
+  sortOrder: z.coerce.number().int().optional()
+});
+
+const upstreamKeySchema = z.object({
+  key: z.string().min(1),
+  name: z.string().optional(),
+  agentType: z.enum(['shared', 'claude-code', 'codex']).optional(),
+  sortOrder: z.coerce.number().int().optional(),
+  expiresAt: z.string().nullable().optional()
+});
+
+const upstreamModelRateSchema = z.object({
+  id: z.string().min(1).optional(),
+  agentType: z.enum(['claude-code', 'codex']),
+  model: z.string().min(1),
+  inputRatePerMillion: z.coerce.number().nonnegative().optional(),
+  outputRatePerMillion: z.coerce.number().nonnegative().optional(),
+  cacheCreationRatePerMillion: z.coerce.number().nonnegative().optional(),
+  cacheReadRatePerMillion: z.coerce.number().nonnegative().optional(),
+  isDefault: z.boolean().optional(),
+  sortOrder: z.coerce.number().int().optional()
+});
+
+app.get('/api/upstream-channels', adminGuard, (_req, res) => {
+  res.json({ channels: listUpstreamChannels() });
+});
+
+app.post('/api/upstream-channels', adminGuard, (req, res) => {
+  const parsed = upstreamChannelSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const channel = upsertUpstreamChannel(parsed.data);
+    res.status(parsed.data.id ? 200 : 201).json({ channel, channels: listUpstreamChannels() });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to save upstream channel' });
+  }
+});
+
+app.patch('/api/upstream-channels/:id', adminGuard, (req, res) => {
+  const parsed = upstreamChannelSchema.omit({ id: true }).partial().required({ name: true, claudeApiUrl: true, codexApiUrl: true }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const channel = upsertUpstreamChannel({ id: routeParam(req.params.id), ...parsed.data });
+    res.json({ channel, channels: listUpstreamChannels() });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to save upstream channel' });
+  }
+});
+
+app.delete('/api/upstream-channels/:id', adminGuard, (req, res) => {
+  const channel = deleteUpstreamChannel(routeParam(req.params.id));
+  if (!channel) {
+    res.status(404).json({ error: 'Channel not found' });
+    return;
+  }
+  res.json({ channel, channels: listUpstreamChannels() });
+});
+
+app.post('/api/upstream-channels/:id/keys', adminGuard, (req, res) => {
+  const parsed = upstreamKeySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const channel = addUpstreamChannelKey(routeParam(req.params.id), parsed.data);
+    if (!channel) {
+      res.status(404).json({ error: 'Channel not found' });
+      return;
+    }
+    res.status(201).json({ channel, channels: listUpstreamChannels() });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to add upstream key' });
+  }
+});
+
+app.patch('/api/upstream-channels/:id/keys/:keyId', adminGuard, (req, res) => {
+  const parsed = upstreamKeySchema.extend({ key: z.string().optional() }).partial().extend({
+    status: z.enum(['active', 'paused', 'revoked']).optional()
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const channel = updateUpstreamChannelKey(routeParam(req.params.id), routeParam(req.params.keyId), parsed.data);
+    if (!channel) {
+      res.status(404).json({ error: 'Key not found' });
+      return;
+    }
+    res.json({ channel, channels: listUpstreamChannels() });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to update upstream key' });
+  }
+});
+
+app.delete('/api/upstream-channels/:id/keys/:keyId', adminGuard, (req, res) => {
+  const key = deleteUpstreamChannelKey(routeParam(req.params.id), routeParam(req.params.keyId));
+  if (!key) {
+    res.status(404).json({ error: 'Key not found' });
+    return;
+  }
+  res.json({ key, channels: listUpstreamChannels() });
+});
+
+app.post('/api/upstream-channels/:id/model-rates', adminGuard, (req, res) => {
+  const parsed = upstreamModelRateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const channel = upsertUpstreamModelRate(routeParam(req.params.id), parsed.data);
+    if (!channel) {
+      res.status(404).json({ error: 'Channel not found' });
+      return;
+    }
+    res.status(201).json({ channel, channels: listUpstreamChannels() });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to save model rate' });
+  }
+});
+
+app.patch('/api/upstream-channels/:id/model-rates/:rateId', adminGuard, (req, res) => {
+  const parsed = upstreamModelRateSchema.partial().required({ agentType: true, model: true }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const channel = upsertUpstreamModelRate(routeParam(req.params.id), { id: routeParam(req.params.rateId), ...parsed.data });
+    if (!channel) {
+      res.status(404).json({ error: 'Rate not found' });
+      return;
+    }
+    res.json({ channel, channels: listUpstreamChannels() });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to save model rate' });
+  }
+});
+
+app.delete('/api/upstream-channels/:id/model-rates/:rateId', adminGuard, (req, res) => {
+  const rate = deleteUpstreamModelRate(routeParam(req.params.id), routeParam(req.params.rateId));
+  if (!rate) {
+    res.status(404).json({ error: 'Rate not found' });
+    return;
+  }
+  res.json({ rate, channels: listUpstreamChannels() });
 });
 
 app.get('/api/keys', adminGuard, (_req, res) => {
@@ -1014,15 +1981,12 @@ app.get('/api/keys/:id/secret', adminGuard, (req, res) => {
     return;
   }
 
-  const endpoint = requestApiEndpoint(req);
-  const providerName = 'RelayHub';
-
   res.json({
     key: result.rawKey,
     keyPreview: result.key.keyPreview,
     ccSwitch: {
-      codex: buildCcSwitchProviderLink('codex', providerName, endpoint, result.rawKey),
-      claude: buildCcSwitchProviderLink('claude', providerName, endpoint, result.rawKey)
+      codex: buildCcSwitchProviderLink('codex', 'RelayHub Codex', requestAgentApiEndpoint(req, 'codex'), result.rawKey),
+      claude: buildCcSwitchProviderLink('claude', 'RelayHub Claude Code', requestAgentApiEndpoint(req, 'claude'), result.rawKey)
     }
   });
 });
@@ -1040,14 +2004,12 @@ app.get('/api/user/keys/:id/secret', (req, res) => {
     return;
   }
 
-  const endpoint = requestApiEndpoint(req);
-  const providerName = 'RelayHub';
   res.json({
     key: result.rawKey,
     keyPreview: result.key.keyPreview,
     ccSwitch: {
-      codex: buildCcSwitchProviderLink('codex', providerName, endpoint, result.rawKey),
-      claude: buildCcSwitchProviderLink('claude', providerName, endpoint, result.rawKey)
+      codex: buildCcSwitchProviderLink('codex', 'RelayHub Codex', requestAgentApiEndpoint(req, 'codex'), result.rawKey),
+      claude: buildCcSwitchProviderLink('claude', 'RelayHub Claude Code', requestAgentApiEndpoint(req, 'claude'), result.rawKey)
     }
   });
 });
@@ -1164,56 +2126,70 @@ app.get('/api/usage', (req, res) => {
   res.json({ summary: usageSummaryForUser(user.id), keys: listKeys(user.id), account: getAccountState(user.id) });
 });
 
-app.head('/v1', (_req, res) => {
-  res.status(204).end();
-});
-
-app.get('/v1', (_req, res) => {
-  res.json({
-    ok: true,
-    service: 'transfer-station',
-    health: '/v1/key/health',
-    balance: '/v1/key/balance',
-    usage: '/v1/key/usage',
-    now: new Date().toISOString()
+for (const prefix of ['/claude-code/v1', '/codex/v1']) {
+  app.head(prefix, (_req, res) => {
+    res.status(204).end();
   });
-});
 
-app.get('/v1/health', (_req, res) => {
-  res.json({
-    ok: true,
-    upstreamConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
-    now: new Date().toISOString()
+  app.get(prefix, (_req, res) => {
+    res.json({
+      ok: true,
+      service: 'transfer-station',
+      health: `${prefix}/key/health`,
+      balance: `${prefix}/key/balance`,
+      usage: `${prefix}/key/usage`,
+      now: new Date().toISOString()
+    });
   });
-});
 
-app.get('/v1/key/health', (req, res) => {
-  const key = authStatusKey(req, res);
-  if (!key) return;
-  res.json(buildKeyHealth(key));
-});
+  app.get(`${prefix}/health`, (_req, res) => {
+    res.json({
+      ok: true,
+      upstreamConfigured: upstreamConfigured(),
+      now: new Date().toISOString()
+    });
+  });
 
-app.get('/v1/key/balance', (req, res) => {
-  const key = authStatusKey(req, res);
-  if (!key) return;
-  res.json(buildKeyBalance(key));
-});
+  app.get(`${prefix}/key/health`, (req, res) => {
+    const key = authStatusKey(req, res, { allowQuery: true });
+    if (!key) return;
+    const agent: AgentType = prefix.startsWith('/codex') ? 'codex' : 'claude-code';
+    void probeKeyHealth(key, agent)
+      .then((health) => res.status(health.ok ? 200 : 503).json(health))
+      .catch((error) => {
+        res.status(503).json({
+          ok: false,
+          status: 'probe_error',
+          message: error instanceof Error ? error.message : 'Health probe failed',
+          now: new Date().toISOString()
+        });
+      });
+  });
 
-app.get('/v1/key/usage', (req, res) => {
-  const key = authStatusKey(req, res);
-  if (!key) return;
-  res.json(buildKeyUsageStatus(key));
-});
+  app.get(`${prefix}/key/balance`, (req, res) => {
+    const key = authStatusKey(req, res);
+    if (!key) return;
+    res.json(buildKeyBalance(key));
+  });
 
-app.all('/v1/*route', async (req, res) => {
+  app.get(`${prefix}/key/usage`, (req, res) => {
+    const key = authStatusKey(req, res);
+    if (!key) return;
+    res.json(buildKeyUsageStatus(key));
+  });
+}
+
+async function handleProxyRequest(req: Request, res: Response, agent: AgentType) {
   const startedAt = Date.now();
   const key = authProxyKey(req, res);
   if (!key) return;
+  const upstreamPath = routeToUpstreamPath(req);
 
   const quotaCheck = assertQuota(key);
   if (!quotaCheck.ok) {
     createUsageLog({
       apiKeyId: key.id,
+      usageSource: 'none',
       model: req.body?.model || 'unknown',
       path: req.path,
       method: req.method,
@@ -1236,7 +2212,8 @@ app.all('/v1/*route', async (req, res) => {
     return;
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) {
+  const selections = listUpstreamSelections(agent);
+  if (!selections.length) {
     writeProxyLog({
       key,
       model: req.body?.model || 'unknown',
@@ -1244,88 +2221,155 @@ app.all('/v1/*route', async (req, res) => {
       method: req.method,
       statusCode: 500,
       startedAt,
-      errorMessage: 'ANTHROPIC_API_KEY is not configured',
+      errorMessage: `No upstream channel is available for ${agent}`,
       requestId: `local_${crypto.randomUUID()}`
     });
     res.status(500).json({
       type: 'error',
       error: {
         type: 'configuration_error',
-        message: 'Upstream Anthropic API key is not configured'
+        message: `No upstream channel is available for ${agent}`
       }
     });
     return;
   }
 
-  const upstreamUrl = `${upstreamBaseUrl}${req.originalUrl}`;
-  const headers = new Headers();
-  const incomingAnthropicVersion = req.header('anthropic-version') || anthropicVersion;
-  headers.set('x-api-key', process.env.ANTHROPIC_API_KEY);
-  headers.set('anthropic-version', incomingAnthropicVersion);
-  headers.set('content-type', 'application/json');
-
-  const betaHeader = req.header('anthropic-beta');
-  if (betaHeader) headers.set('anthropic-beta', betaHeader);
-
+  let lastFailure: {
+    statusCode: number;
+    message: string;
+    requestId: string;
+  } | null = null;
+  const attemptedGroupIds = new Set<string>();
   try {
-    const upstream = await fetch(upstreamUrl, {
-      method: req.method,
-      headers,
-      body: ['GET', 'HEAD'].includes(req.method.toUpperCase()) ? undefined : JSON.stringify(req.body ?? {})
-    });
+    for (const selection of selections) {
+      if (attemptedGroupIds.has(selection.group.id) && isGroupLevelFailure(lastFailure?.statusCode || 0)) {
+        continue;
+      }
 
-    touchKey(key.id);
-    const requestId = upstream.headers.get('request-id') || upstream.headers.get('x-request-id') || `up_${crypto.randomUUID()}`;
-    const contentType = upstream.headers.get('content-type') || 'application/json';
-    res.status(upstream.status);
-    res.setHeader('content-type', contentType);
-    res.setHeader('x-transfer-station-key', key.keyPreview);
-    res.setHeader('x-transfer-station-quota-five-hour-remaining', String(quotaCheck.quota.remainingFiveHour));
-    res.setHeader('x-transfer-station-quota-weekly-remaining', String(quotaCheck.quota.remainingWeekly));
+      const upstreamUrl = `${selection.apiUrl}${upstreamPath}`;
+      const upstream = await fetch(upstreamUrl, {
+        method: req.method,
+        headers: buildUpstreamHeaders(req, selection),
+        body: ['GET', 'HEAD'].includes(req.method.toUpperCase()) ? undefined : JSON.stringify(req.body ?? {})
+      });
 
-    if (contentType.includes('text/event-stream') && upstream.body) {
-      await streamSse(upstream, res, {
-        key,
-        model: req.body?.model || 'unknown',
+      touchUpstreamKey(selection.key.id);
+      const requestId = upstream.headers.get('request-id') || upstream.headers.get('x-request-id') || `up_${crypto.randomUUID()}`;
+      const contentType = upstream.headers.get('content-type') || 'application/json';
+      const requestModel = req.body?.model || 'unknown';
+      const rates = resolveUpstreamRates({ groupId: selection.group.id, agent, model: requestModel });
+      const displayUsageMultiplier = selection.group.displayUsageMultiplier;
+
+      if (contentType.includes('text/event-stream') && upstream.body) {
+        touchKey(key.id);
+        res.status(upstream.status);
+        res.setHeader('content-type', contentType);
+        res.setHeader('x-transfer-station-key', key.keyPreview);
+        res.setHeader('x-transfer-station-upstream', selection.group.name);
+        res.setHeader('x-transfer-station-quota-five-hour-remaining', String(quotaCheck.quota.remainingFiveHour));
+        res.setHeader('x-transfer-station-quota-weekly-remaining', String(quotaCheck.quota.remainingWeekly));
+        await streamSse(upstream, res, {
+          key,
+          model: requestModel,
+          path: req.path,
+          method: req.method,
+          statusCode: upstream.status,
+          startedAt,
+          requestId,
+          rates,
+          displayUsageMultiplier,
+          usageSource: quotaCheck.quota.quotaSource
+        });
+        return;
+      }
+
+      const text = await upstream.text();
+      const payload = parseJsonText(text);
+      const errorMessage = upstreamErrorMessage(payload, upstream.statusText);
+
+      if (!upstream.ok && isKeyLevelFailure(upstream.status, errorMessage)) {
+        markUpstreamKeyFailure({
+          keyId: selection.key.id,
+          statusCode: upstream.status,
+          reason: errorMessage,
+          until: recoveryUntilFromUpstream(upstream.headers, payload)
+        });
+        lastFailure = { statusCode: upstream.status, message: errorMessage, requestId };
+        continue;
+      }
+
+      if (!upstream.ok && isGroupLevelFailure(upstream.status)) {
+        attemptedGroupIds.add(selection.group.id);
+        markUpstreamGroupFailure({
+          groupId: selection.group.id,
+          statusCode: upstream.status,
+          reason: errorMessage,
+          until: recoveryUntilFromUpstream(upstream.headers, payload)
+        });
+        lastFailure = { statusCode: upstream.status, message: errorMessage, requestId };
+        continue;
+      }
+
+      touchKey(key.id);
+      res.status(upstream.status);
+      res.setHeader('content-type', contentType);
+      res.setHeader('x-transfer-station-key', key.keyPreview);
+      res.setHeader('x-transfer-station-upstream', selection.group.name);
+      res.setHeader('x-transfer-station-usage-multiplier', displayUsageMultiplier.toFixed(2));
+      res.setHeader('x-transfer-station-quota-five-hour-remaining', String(quotaCheck.quota.remainingFiveHour));
+      res.setHeader('x-transfer-station-quota-weekly-remaining', String(quotaCheck.quota.remainingWeekly));
+      const responseBody = contentType.includes('application/json')
+        ? rewriteJsonUsageText(text, displayUsageMultiplier).text
+        : text;
+      res.send(responseBody);
+
+      const loggedModel = req.body?.model || (payload as any)?.model || 'unknown';
+      const tokenUsage = getTokenUsage(
+        payload,
+        resolveUpstreamRates({ groupId: selection.group.id, agent, model: loggedModel }),
+        displayUsageMultiplier
+      );
+      createUsageLog({
+        apiKeyId: key.id,
+        usageSource: quotaCheck.quota.quotaSource,
+        model: loggedModel,
         path: req.path,
         method: req.method,
         statusCode: upstream.status,
-        startedAt,
+        inputTokens: tokenUsage.inputTokens,
+        outputTokens: tokenUsage.outputTokens,
+        cacheCreationInputTokens: tokenUsage.cacheCreationInputTokens,
+        cacheReadInputTokens: tokenUsage.cacheReadInputTokens,
+        totalTokens: tokenUsage.totalTokens,
+        inputCostCents: tokenUsage.inputCostCents,
+        outputCostCents: tokenUsage.outputCostCents,
+        cacheCreationCostCents: tokenUsage.cacheCreationCostCents,
+        cacheReadCostCents: tokenUsage.cacheReadCostCents,
+        totalCostCents: tokenUsage.totalCostCents,
+        latencyMs: Date.now() - startedAt,
+        errorMessage: upstream.ok ? null : errorMessage,
         requestId
       });
       return;
     }
 
-    const text = await upstream.text();
-    res.send(text);
-
-    let payload: unknown = {};
-    try {
-      payload = text ? JSON.parse(text) : {};
-    } catch {
-      payload = {};
-    }
-
-    const tokenUsage = getTokenUsage(payload);
-    createUsageLog({
-      apiKeyId: key.id,
-      model: req.body?.model || (payload as any)?.model || 'unknown',
+    const message = lastFailure?.message || 'All upstream channels failed';
+    writeProxyLog({
+      key,
+      model: req.body?.model || 'unknown',
       path: req.path,
       method: req.method,
-      statusCode: upstream.status,
-      inputTokens: tokenUsage.inputTokens,
-      outputTokens: tokenUsage.outputTokens,
-      cacheCreationInputTokens: tokenUsage.cacheCreationInputTokens,
-      cacheReadInputTokens: tokenUsage.cacheReadInputTokens,
-      totalTokens: tokenUsage.totalTokens,
-      inputCostCents: tokenUsage.inputCostCents,
-      outputCostCents: tokenUsage.outputCostCents,
-      cacheCreationCostCents: tokenUsage.cacheCreationCostCents,
-      cacheReadCostCents: tokenUsage.cacheReadCostCents,
-      totalCostCents: tokenUsage.totalCostCents,
-      latencyMs: Date.now() - startedAt,
-      errorMessage: upstream.ok ? null : (payload as any)?.error?.message || upstream.statusText,
-      requestId
+      statusCode: lastFailure?.statusCode || 502,
+      startedAt,
+      errorMessage: message,
+      requestId: lastFailure?.requestId || `local_${crypto.randomUUID()}`
+    });
+    res.status(lastFailure?.statusCode || 502).json({
+      type: 'error',
+      error: {
+        type: lastFailure?.statusCode === 402 ? 'rate_limit_error' : 'api_error',
+        message
+      }
     });
   } catch (error) {
     writeProxyLog({
@@ -1346,6 +2390,24 @@ app.all('/v1/*route', async (req, res) => {
       }
     });
   }
+}
+
+app.all('/claude-code/v1/*route', (req, res) => {
+  void handleProxyRequest(req, res, 'claude-code');
+});
+
+app.all('/codex/v1/*route', (req, res) => {
+  void handleProxyRequest(req, res, 'codex');
+});
+
+app.all(['/v1', '/v1/*route'], (_req, res) => {
+  res.status(404).json({
+    type: 'error',
+    error: {
+      type: 'not_found_error',
+      message: 'Legacy /v1 endpoint has been removed. Use /claude-code/v1 or /codex/v1.'
+    }
+  });
 });
 
 async function streamSse(
@@ -1358,7 +2420,10 @@ async function streamSse(
     method: string;
     statusCode: number;
     startedAt: number;
-    requestId: string;
+	    requestId: string;
+	    usageSource?: 'plan' | 'balance' | 'none';
+	    rates?: UsageRates;
+    displayUsageMultiplier?: number;
   }
 ) {
   const decoder = new TextDecoder();
@@ -1372,7 +2437,7 @@ async function streamSse(
     if (done) break;
 
     const chunkText = decoder.decode(value, { stream: true });
-    res.write(chunkText);
+    res.write(scaleSseChunk(chunkText, logContext.displayUsageMultiplier || 1));
     buffered += chunkText;
 
     const events = buffered.split('\n\n');
@@ -1411,6 +2476,8 @@ async function streamSse(
   writeProxyLog({
     ...logContext,
     usage: finalUsage,
+    usageSource: logContext.usageSource,
+    usageMultiplier: logContext.displayUsageMultiplier,
     errorMessage
   });
 }

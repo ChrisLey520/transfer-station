@@ -1,6 +1,10 @@
 export type Language = 'zh-CN' | 'zh-TW' | 'en';
 
 export type UserRole = 'admin' | 'member';
+export type AgentType = 'claude-code' | 'codex';
+export type UpstreamKeyAgentType = 'shared' | AgentType;
+export type PurchaseChannelId = 'taobao' | 'xianyu';
+export type ProductItemType = 'plan' | 'credit';
 
 export type User = {
   id: string;
@@ -24,6 +28,15 @@ export type Plan = {
   updatedAt: string;
 };
 
+export type ProductLink = {
+  itemType: ProductItemType;
+  itemId: string;
+  channel: PurchaseChannelId;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ApiKeyRecord = {
   id: string;
   name: string;
@@ -41,6 +54,7 @@ export type ApiKeyRecord = {
 export type UsageLog = {
   id: string;
   apiKeyId: string | null;
+  usageSource: 'plan' | 'balance' | 'none';
   model: string;
   path: string;
   method: string;
@@ -61,6 +75,77 @@ export type UsageLog = {
   createdAt: string;
 };
 
+export type UpstreamChannelGroup = {
+  id: string;
+  name: string;
+  status: 'active' | 'paused';
+  claudeApiUrl: string;
+  codexApiUrl: string;
+  useIndependentAgentKeys: boolean;
+  inputRatePerMillion: number;
+  outputRatePerMillion: number;
+  cacheCreationRatePerMillion: number;
+  cacheReadRatePerMillion: number;
+  serverErrorRecoveryMinutes: number;
+  displayUsageMultiplier: number;
+  sortOrder: number;
+  degradedUntil: string | null;
+  degradedReason: string | null;
+  degradedStatusCode: number | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UpstreamChannelKey = {
+  id: string;
+  channelGroupId: string;
+  name: string;
+  agentType: UpstreamKeyAgentType;
+  keyHash: string;
+  keyPreview: string;
+  keyCiphertext: string;
+  status: 'active' | 'paused' | 'revoked';
+  sortOrder: number;
+  expiresAt: string | null;
+  exhaustedUntil: string | null;
+  failureReason: string | null;
+  failureStatusCode: number | null;
+  lastUsedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UpstreamChannelKeyListItem = Omit<UpstreamChannelKey, 'keyHash' | 'keyCiphertext'>;
+
+export type UpstreamModelRate = {
+  id: string;
+  channelGroupId: string;
+  agentType: AgentType;
+  model: string;
+  inputRatePerMillion: number;
+  outputRatePerMillion: number;
+  cacheCreationRatePerMillion: number;
+  cacheReadRatePerMillion: number;
+  isDefault: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UpstreamChannelGroupListItem = UpstreamChannelGroup & {
+  keys: UpstreamChannelKeyListItem[];
+  modelRates: UpstreamModelRate[];
+  keyCounts: Record<UpstreamKeyAgentType, number>;
+};
+
+export type UpstreamSelection = {
+  group: UpstreamChannelGroup;
+  key: UpstreamChannelKey;
+  rawKey: string;
+  agent: AgentType;
+  apiUrl: string;
+};
+
 export type QuotaSnapshot = {
   fiveHourUsed: number;
   fiveHourLimit: number;
@@ -68,6 +153,8 @@ export type QuotaSnapshot = {
   weeklyLimit: number;
   remainingFiveHour: number;
   remainingWeekly: number;
+  balanceCents: number;
+  quotaSource: 'plan' | 'balance' | 'none';
   fiveHourResetAt: string;
   weeklyResetAt: string;
 };
@@ -104,8 +191,63 @@ export type GiftCard = {
   planRank: number;
   durationMonths: number;
   redeemedAt: string | null;
+  revokedAt: string | null;
+  createdByUserId: string | null;
+  createdByEmail?: string | null;
   redeemedByUserId: string | null;
+  redeemedByEmail?: string | null;
+  revokedByUserId: string | null;
+  revokedByEmail?: string | null;
   createdAt: string;
 };
 
 export type GiftCardConsequence = 'credit' | 'upgrade' | 'extend';
+
+export type TaobaoShop = {
+  id: string;
+  nick: string;
+  sessionCiphertext: string;
+  sessionExpiresAt: string | null;
+  messagePermittedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TaobaoProductMapping = {
+  id: string;
+  numIid: string;
+  skuId: string | null;
+  title: string;
+  giftType: GiftCardType;
+  amountCents: number;
+  planId: string | null;
+  durationMonths: number;
+  quantity: number;
+  isActive: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PlatformOrderDeliveryStatus = 'pending' | 'ready' | 'claimed' | 'skipped' | 'failed';
+
+export type PlatformOrder = {
+  id: string;
+  platform: PurchaseChannelId;
+  shopId: string | null;
+  orderId: string;
+  subOrderId: string;
+  buyerNick: string;
+  itemId: string;
+  skuId: string | null;
+  title: string;
+  status: string;
+  giftCardCode: string | null;
+  deliveryStatus: PlatformOrderDeliveryStatus;
+  deliveryMessage: string | null;
+  claimedAt: string | null;
+  claimedByUserId: string | null;
+  lastEventAt: string | null;
+  rawPayload: string | null;
+  createdAt: string;
+  updatedAt: string;
+};

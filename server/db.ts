@@ -96,6 +96,7 @@ export function initDb() {
     CREATE TABLE IF NOT EXISTS usage_logs (
       id TEXT PRIMARY KEY,
       api_key_id TEXT,
+      usage_source TEXT NOT NULL DEFAULT 'plan' CHECK (usage_source IN ('plan', 'balance', 'none')),
       model TEXT NOT NULL DEFAULT 'unknown',
       path TEXT NOT NULL,
       method TEXT NOT NULL,
@@ -131,8 +132,138 @@ export function initDb() {
       plan_rank INTEGER NOT NULL DEFAULT 0,
       duration_months INTEGER NOT NULL DEFAULT 1,
       redeemed_at TEXT,
+      revoked_at TEXT,
+      created_by_user_id TEXT,
       redeemed_by_user_id TEXT,
+      revoked_by_user_id TEXT,
       created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS product_links (
+      item_type TEXT NOT NULL CHECK (item_type IN ('plan', 'credit')),
+      item_id TEXT NOT NULL,
+      channel TEXT NOT NULL CHECK (channel IN ('taobao', 'xianyu')),
+      url TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (item_type, item_id, channel)
+    );
+
+    CREATE TABLE IF NOT EXISTS taobao_shops (
+      id TEXT PRIMARY KEY,
+      nick TEXT NOT NULL DEFAULT '',
+      session_ciphertext TEXT NOT NULL,
+      session_expires_at TEXT,
+      message_permitted_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS taobao_product_mappings (
+      id TEXT PRIMARY KEY,
+      num_iid TEXT NOT NULL,
+      sku_id TEXT,
+      title TEXT NOT NULL DEFAULT '',
+      gift_type TEXT NOT NULL CHECK (gift_type IN ('credit', 'plan')),
+      amount_cents INTEGER NOT NULL DEFAULT 0,
+      plan_id TEXT,
+      duration_months INTEGER NOT NULL DEFAULT 1,
+      quantity INTEGER NOT NULL DEFAULT 1,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(num_iid, sku_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS platform_orders (
+      id TEXT PRIMARY KEY,
+      platform TEXT NOT NULL CHECK (platform IN ('taobao', 'xianyu')),
+      shop_id TEXT,
+      order_id TEXT NOT NULL,
+      sub_order_id TEXT NOT NULL DEFAULT '',
+      buyer_nick TEXT NOT NULL DEFAULT '',
+      item_id TEXT NOT NULL DEFAULT '',
+      sku_id TEXT,
+      title TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT '',
+      gift_card_code TEXT,
+      delivery_status TEXT NOT NULL DEFAULT 'pending' CHECK (delivery_status IN ('pending', 'ready', 'claimed', 'skipped', 'failed')),
+      delivery_message TEXT,
+      claimed_at TEXT,
+      claimed_by_user_id TEXT,
+      last_event_at TEXT,
+      raw_payload TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(platform, order_id, sub_order_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS taobao_tmc_messages (
+      id TEXT PRIMARY KEY,
+      topic TEXT NOT NULL DEFAULT '',
+      content TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'received',
+      error_message TEXT,
+      received_at TEXT NOT NULL,
+      processed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS upstream_channel_groups (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused')),
+      claude_api_url TEXT NOT NULL DEFAULT '',
+      codex_api_url TEXT NOT NULL DEFAULT '',
+      use_independent_agent_keys INTEGER NOT NULL DEFAULT 0,
+      input_rate_per_million REAL NOT NULL DEFAULT 3,
+      output_rate_per_million REAL NOT NULL DEFAULT 15,
+      cache_creation_rate_per_million REAL NOT NULL DEFAULT 3.75,
+      cache_read_rate_per_million REAL NOT NULL DEFAULT 0.3,
+      server_error_recovery_minutes INTEGER NOT NULL DEFAULT 10,
+      display_usage_multiplier REAL NOT NULL DEFAULT 2,
+      sort_order INTEGER NOT NULL DEFAULT 100,
+      degraded_until TEXT,
+      degraded_reason TEXT,
+      degraded_status_code INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS upstream_channel_keys (
+      id TEXT PRIMARY KEY,
+      channel_group_id TEXT NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
+      agent_type TEXT NOT NULL DEFAULT 'shared' CHECK (agent_type IN ('shared', 'claude-code', 'codex')),
+      key_hash TEXT NOT NULL UNIQUE,
+      key_preview TEXT NOT NULL,
+      key_ciphertext TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'revoked')),
+      sort_order INTEGER NOT NULL DEFAULT 100,
+      expires_at TEXT,
+      exhausted_until TEXT,
+      failure_reason TEXT,
+      failure_status_code INTEGER,
+      last_used_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (channel_group_id) REFERENCES upstream_channel_groups(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS upstream_model_rates (
+      id TEXT PRIMARY KEY,
+      channel_group_id TEXT NOT NULL,
+      agent_type TEXT NOT NULL CHECK (agent_type IN ('claude-code', 'codex')),
+      model TEXT NOT NULL,
+      input_rate_per_million REAL NOT NULL DEFAULT 0,
+      output_rate_per_million REAL NOT NULL DEFAULT 0,
+      cache_creation_rate_per_million REAL NOT NULL DEFAULT 0,
+      cache_read_rate_per_million REAL NOT NULL DEFAULT 0,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 100,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(channel_group_id, agent_type, model),
+      FOREIGN KEY (channel_group_id) REFERENCES upstream_channel_groups(id) ON DELETE CASCADE
     );
 
     CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions(token_hash);
@@ -140,6 +271,13 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_usage_api_key_created_at ON usage_logs(api_key_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_usage_created_at ON usage_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_gift_cards_redeemed_at ON gift_cards(redeemed_at);
+    CREATE INDEX IF NOT EXISTS idx_product_links_item ON product_links(item_type, item_id);
+    CREATE INDEX IF NOT EXISTS idx_taobao_product_mappings_item ON taobao_product_mappings(num_iid, sku_id);
+    CREATE INDEX IF NOT EXISTS idx_platform_orders_lookup ON platform_orders(platform, order_id);
+    CREATE INDEX IF NOT EXISTS idx_platform_orders_gift_card ON platform_orders(gift_card_code);
+    CREATE INDEX IF NOT EXISTS idx_upstream_groups_status_order ON upstream_channel_groups(status, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_upstream_keys_group_agent_status ON upstream_channel_keys(channel_group_id, agent_type, status);
+    CREATE INDEX IF NOT EXISTS idx_upstream_model_rates_group_agent ON upstream_model_rates(channel_group_id, agent_type, model);
   `);
 
   ensureUsageLogMoneyColumns();
@@ -147,6 +285,10 @@ export function initDb() {
   ensureApiKeySecretColumns();
   ensureApiKeyOwnerColumn();
   ensureGiftCardOwnerColumn();
+  ensureTaobaoIntegrationTables();
+  ensurePlatformOrderClaimColumns();
+  ensureUpstreamChannelColumns();
+  ensureUpstreamKeyColumns();
 }
 
 function ensureUserRoleColumn() {
@@ -191,6 +333,99 @@ function ensureGiftCardOwnerColumn() {
   if (!columns.has('redeemed_by_user_id')) {
     db.exec('ALTER TABLE gift_cards ADD COLUMN redeemed_by_user_id TEXT');
   }
+
+  if (!columns.has('created_by_user_id')) {
+    db.exec('ALTER TABLE gift_cards ADD COLUMN created_by_user_id TEXT');
+  }
+
+  if (!columns.has('revoked_at')) {
+    db.exec('ALTER TABLE gift_cards ADD COLUMN revoked_at TEXT');
+  }
+
+  if (!columns.has('revoked_by_user_id')) {
+    db.exec('ALTER TABLE gift_cards ADD COLUMN revoked_by_user_id TEXT');
+  }
+
+  db.exec('CREATE INDEX IF NOT EXISTS idx_gift_cards_revoked_at ON gift_cards(revoked_at)');
+}
+
+function ensureTaobaoIntegrationTables() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS taobao_shops (
+      id TEXT PRIMARY KEY,
+      nick TEXT NOT NULL DEFAULT '',
+      session_ciphertext TEXT NOT NULL,
+      session_expires_at TEXT,
+      message_permitted_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS taobao_product_mappings (
+      id TEXT PRIMARY KEY,
+      num_iid TEXT NOT NULL,
+      sku_id TEXT,
+      title TEXT NOT NULL DEFAULT '',
+      gift_type TEXT NOT NULL CHECK (gift_type IN ('credit', 'plan')),
+      amount_cents INTEGER NOT NULL DEFAULT 0,
+      plan_id TEXT,
+      duration_months INTEGER NOT NULL DEFAULT 1,
+      quantity INTEGER NOT NULL DEFAULT 1,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(num_iid, sku_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS platform_orders (
+      id TEXT PRIMARY KEY,
+      platform TEXT NOT NULL CHECK (platform IN ('taobao', 'xianyu')),
+      shop_id TEXT,
+      order_id TEXT NOT NULL,
+      sub_order_id TEXT NOT NULL DEFAULT '',
+      buyer_nick TEXT NOT NULL DEFAULT '',
+      item_id TEXT NOT NULL DEFAULT '',
+      sku_id TEXT,
+      title TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT '',
+      gift_card_code TEXT,
+      delivery_status TEXT NOT NULL DEFAULT 'pending' CHECK (delivery_status IN ('pending', 'ready', 'claimed', 'skipped', 'failed')),
+      delivery_message TEXT,
+      claimed_at TEXT,
+      claimed_by_user_id TEXT,
+      last_event_at TEXT,
+      raw_payload TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(platform, order_id, sub_order_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS taobao_tmc_messages (
+      id TEXT PRIMARY KEY,
+      topic TEXT NOT NULL DEFAULT '',
+      content TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'received',
+      error_message TEXT,
+      received_at TEXT NOT NULL,
+      processed_at TEXT
+    );
+  `);
+
+  db.exec('CREATE INDEX IF NOT EXISTS idx_taobao_product_mappings_item ON taobao_product_mappings(num_iid, sku_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_platform_orders_lookup ON platform_orders(platform, order_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_platform_orders_gift_card ON platform_orders(gift_card_code)');
+}
+
+function ensurePlatformOrderClaimColumns() {
+  const columns = new Set(
+    (db.prepare('PRAGMA table_info(platform_orders)').all() as Array<{ name: string }>).map((column) => column.name)
+  );
+
+  if (!columns.has('claimed_by_user_id')) {
+    db.exec('ALTER TABLE platform_orders ADD COLUMN claimed_by_user_id TEXT');
+  }
+
+  db.exec('CREATE INDEX IF NOT EXISTS idx_platform_orders_claimed_by ON platform_orders(claimed_by_user_id, claimed_at)');
 }
 
 function ensureUsageLogMoneyColumns() {
@@ -201,6 +436,7 @@ function ensureUsageLogMoneyColumns() {
   const additions = [
     ['cache_creation_input_tokens', 'INTEGER NOT NULL DEFAULT 0'],
     ['cache_read_input_tokens', 'INTEGER NOT NULL DEFAULT 0'],
+    ['usage_source', "TEXT NOT NULL DEFAULT 'plan' CHECK (usage_source IN ('plan', 'balance', 'none'))"],
     ['input_cost_cents', 'INTEGER NOT NULL DEFAULT 0'],
     ['output_cost_cents', 'INTEGER NOT NULL DEFAULT 0'],
     ['cache_creation_cost_cents', 'INTEGER NOT NULL DEFAULT 0'],
@@ -215,6 +451,34 @@ function ensureUsageLogMoneyColumns() {
   }
 }
 
+function ensureUpstreamChannelColumns() {
+  const columns = new Set(
+    (db.prepare('PRAGMA table_info(upstream_channel_groups)').all() as Array<{ name: string }>).map((column) => column.name)
+  );
+
+  if (!columns.has('server_error_recovery_minutes')) {
+    db.exec('ALTER TABLE upstream_channel_groups ADD COLUMN server_error_recovery_minutes INTEGER NOT NULL DEFAULT 10');
+  }
+
+  if (!columns.has('display_usage_multiplier')) {
+    db.exec('ALTER TABLE upstream_channel_groups ADD COLUMN display_usage_multiplier REAL NOT NULL DEFAULT 2');
+  }
+}
+
+function ensureUpstreamKeyColumns() {
+  const columns = new Set(
+    (db.prepare('PRAGMA table_info(upstream_channel_keys)').all() as Array<{ name: string }>).map((column) => column.name)
+  );
+
+  if (!columns.has('expires_at')) {
+    db.exec('ALTER TABLE upstream_channel_keys ADD COLUMN expires_at TEXT');
+  }
+
+  if (!columns.has('name')) {
+    db.exec("ALTER TABLE upstream_channel_keys ADD COLUMN name TEXT NOT NULL DEFAULT ''");
+  }
+}
+
 export function mapPlan(row: any) {
   return {
     id: row.id,
@@ -225,6 +489,70 @@ export function mapPlan(row: any) {
     priceCents: row.price_cents,
     currency: row.currency,
     isActive: row.is_active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export function mapProductLink(row: any) {
+  return {
+    itemType: row.item_type,
+    itemId: row.item_id,
+    channel: row.channel,
+    url: row.url,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export function mapTaobaoShop(row: any) {
+  return {
+    id: row.id,
+    nick: row.nick,
+    sessionCiphertext: row.session_ciphertext,
+    sessionExpiresAt: row.session_expires_at ?? null,
+    messagePermittedAt: row.message_permitted_at ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export function mapTaobaoProductMapping(row: any) {
+  return {
+    id: row.id,
+    numIid: row.num_iid,
+    skuId: row.sku_id ?? null,
+    title: row.title,
+    giftType: row.gift_type,
+    amountCents: row.amount_cents,
+    planId: row.plan_id ?? null,
+    durationMonths: row.duration_months,
+    quantity: row.quantity,
+    isActive: row.is_active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export function mapPlatformOrder(row: any) {
+  return {
+    id: row.id,
+    platform: row.platform,
+    shopId: row.shop_id ?? null,
+    orderId: row.order_id,
+    subOrderId: row.sub_order_id,
+    buyerNick: row.buyer_nick,
+    itemId: row.item_id,
+    skuId: row.sku_id ?? null,
+    title: row.title,
+    status: row.status,
+    giftCardCode: row.gift_card_code ?? null,
+    deliveryStatus: row.delivery_status,
+    deliveryMessage: row.delivery_message ?? null,
+    claimedAt: row.claimed_at ?? null,
+    claimedByUserId: row.claimed_by_user_id ?? null,
+    lastEventAt: row.last_event_at ?? null,
+    rawPayload: row.raw_payload ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -250,6 +578,7 @@ export function mapLog(row: any) {
   return {
     id: row.id,
     apiKeyId: row.api_key_id,
+    usageSource: row.usage_source ?? 'plan',
     model: row.model,
     path: row.path,
     method: row.method,
@@ -268,5 +597,66 @@ export function mapLog(row: any) {
     errorMessage: row.error_message,
     requestId: row.request_id,
     createdAt: row.created_at
+  };
+}
+
+export function mapUpstreamChannel(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    claudeApiUrl: row.claude_api_url,
+    codexApiUrl: row.codex_api_url,
+    useIndependentAgentKeys: Boolean(row.use_independent_agent_keys),
+    inputRatePerMillion: Number(row.input_rate_per_million),
+    outputRatePerMillion: Number(row.output_rate_per_million),
+    cacheCreationRatePerMillion: Number(row.cache_creation_rate_per_million),
+    cacheReadRatePerMillion: Number(row.cache_read_rate_per_million),
+    serverErrorRecoveryMinutes: Number(row.server_error_recovery_minutes ?? 10),
+    displayUsageMultiplier: Number(row.display_usage_multiplier ?? 2),
+    sortOrder: Number(row.sort_order),
+    degradedUntil: row.degraded_until ?? null,
+    degradedReason: row.degraded_reason ?? null,
+    degradedStatusCode: row.degraded_status_code ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export function mapUpstreamChannelKey(row: any) {
+  return {
+    id: row.id,
+    channelGroupId: row.channel_group_id,
+    name: row.name ?? '',
+    agentType: row.agent_type,
+    keyHash: row.key_hash,
+    keyPreview: row.key_preview,
+    keyCiphertext: row.key_ciphertext,
+    status: row.status,
+    sortOrder: Number(row.sort_order),
+    expiresAt: row.expires_at ?? null,
+    exhaustedUntil: row.exhausted_until ?? null,
+    failureReason: row.failure_reason ?? null,
+    failureStatusCode: row.failure_status_code ?? null,
+    lastUsedAt: row.last_used_at ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export function mapUpstreamModelRate(row: any) {
+  return {
+    id: row.id,
+    channelGroupId: row.channel_group_id,
+    agentType: row.agent_type,
+    model: row.model,
+    inputRatePerMillion: Number(row.input_rate_per_million),
+    outputRatePerMillion: Number(row.output_rate_per_million),
+    cacheCreationRatePerMillion: Number(row.cache_creation_rate_per_million),
+    cacheReadRatePerMillion: Number(row.cache_read_rate_per_million),
+    isDefault: Boolean(row.is_default),
+    sortOrder: Number(row.sort_order),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   };
 }

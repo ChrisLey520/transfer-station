@@ -16,9 +16,11 @@
     "preseed": "pnpm run check:runtime",
     "dev": "concurrently -k -n api,web -c cyan,green \"pnpm:dev:server\" \"pnpm:dev:web\"",
     "dev:server": "tsx watch server/index.ts",
+    "dev:taobao-worker": "tsx watch server/taobao-worker.ts",
     "dev:web": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "start": "NODE_ENV=production tsx server/index.ts",
+    "start:taobao-worker": "NODE_ENV=production tsx server/taobao-worker.ts",
     "seed": "tsx server/seed.ts"
   },
   "keywords": [

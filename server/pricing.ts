@@ -5,6 +5,13 @@ export type UsageCostInput = {
   cacheReadInputTokens?: number;
 };
 
+export type UsageRates = {
+  inputPerMillion?: number;
+  outputPerMillion?: number;
+  cacheCreationPerMillion?: number;
+  cacheReadPerMillion?: number;
+};
+
 const defaultRates = {
   inputPerMillion: 3,
   outputPerMillion: 15,
@@ -13,17 +20,19 @@ const defaultRates = {
 };
 
 export function centsForTokens(tokens: number, dollarsPerMillion: number) {
-  return Math.round(((tokens || 0) / 1_000_000) * dollarsPerMillion * 100);
+  const rawCents = ((tokens || 0) / 1_000_000) * dollarsPerMillion * 100;
+  return rawCents > 0 ? Math.ceil(rawCents) : 0;
 }
 
-export function usageCostCents(usage: UsageCostInput) {
-  const inputCostCents = centsForTokens(usage.inputTokens || 0, defaultRates.inputPerMillion);
-  const outputCostCents = centsForTokens(usage.outputTokens || 0, defaultRates.outputPerMillion);
+export function usageCostCents(usage: UsageCostInput, rates: UsageRates = {}) {
+  const effectiveRates = { ...defaultRates, ...rates };
+  const inputCostCents = centsForTokens(usage.inputTokens || 0, effectiveRates.inputPerMillion);
+  const outputCostCents = centsForTokens(usage.outputTokens || 0, effectiveRates.outputPerMillion);
   const cacheCreationCostCents = centsForTokens(
     usage.cacheCreationInputTokens || 0,
-    defaultRates.cacheCreationPerMillion
+    effectiveRates.cacheCreationPerMillion
   );
-  const cacheReadCostCents = centsForTokens(usage.cacheReadInputTokens || 0, defaultRates.cacheReadPerMillion);
+  const cacheReadCostCents = centsForTokens(usage.cacheReadInputTokens || 0, effectiveRates.cacheReadPerMillion);
 
   return {
     inputCostCents,

@@ -1,25 +1,53 @@
 import crypto from 'node:crypto';
 import { customAlphabet } from 'nanoid';
-import { db, mapKey, mapLog, mapPlan, nowIso } from './db.js';
+import {
+  db,
+  mapKey,
+  mapLog,
+  mapPlan,
+  mapPlatformOrder,
+  mapProductLink,
+  mapTaobaoProductMapping,
+  mapTaobaoShop,
+  mapUpstreamChannel,
+  mapUpstreamChannelKey,
+  mapUpstreamModelRate,
+  nowIso
+} from './db.js';
 import { createApiKey, decryptKey, encryptKey, hashKey, previewKey } from './crypto.js';
-import { usageCostCents } from './pricing.js';
+import { usageCostCents, type UsageRates } from './pricing.js';
 import type {
+  AgentType,
   ApiKeyRecord,
   GiftCard,
   GiftCardConsequence,
   KeyListItem,
   KeyWithPlan,
   Plan,
+  PlatformOrder,
+  ProductItemType,
+  ProductLink,
+  PurchaseChannelId,
   QuotaSnapshot,
+  TaobaoProductMapping,
+  TaobaoShop,
+  UpstreamChannelGroup,
+  UpstreamChannelGroupListItem,
+  UpstreamChannelKey,
+  UpstreamModelRate,
+  UpstreamKeyAgentType,
+  UpstreamSelection,
   User,
   UserRole,
   UsageLog
 } from './types.js';
 
 const makeId = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 16);
+const makeGiftCodeSegment = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 6);
 const fiveHoursMs = 5 * 60 * 60 * 1000;
 const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
 const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+const upstreamKeyDegradeMs = 30 * 60 * 1000;
 
 type LogRange = '24h' | '3d' | '7d' | '30d';
 type LogStatus = 'all' | 'success' | 'failed';
@@ -49,10 +77,102 @@ type GiftCardPreview = {
   message: string;
 };
 
+type CreateGiftCardsInput =
+  | {
+      type: 'credit';
+      amountCents: number;
+      quantity?: number;
+      prefix?: string;
+      createdByUserId?: string | null;
+    }
+  | {
+      type: 'plan';
+      planId: string;
+      durationMonths?: number;
+      quantity?: number;
+      prefix?: string;
+      createdByUserId?: string | null;
+    };
+
+type GiftCardListInput = {
+  type?: GiftCard['type'];
+  page?: number;
+  pageSize?: number;
+};
+
 type UserSession = {
   user: User;
   token: string;
   expiresAt: string;
+};
+
+type UpstreamChannelInput = {
+  id?: string;
+  name: string;
+  status?: UpstreamChannelGroup['status'];
+  claudeApiUrl: string;
+  codexApiUrl: string;
+  useIndependentAgentKeys?: boolean;
+  inputRatePerMillion?: number;
+  outputRatePerMillion?: number;
+  cacheCreationRatePerMillion?: number;
+  cacheReadRatePerMillion?: number;
+  serverErrorRecoveryMinutes?: number;
+  displayUsageMultiplier?: number;
+  sortOrder?: number;
+};
+
+type UpstreamChannelKeyInput = {
+  key: string;
+  name?: string;
+  agentType?: UpstreamKeyAgentType;
+  sortOrder?: number;
+  expiresAt?: string | null;
+};
+
+type UpstreamModelRateInput = {
+  id?: string;
+  agentType: AgentType;
+  model: string;
+  inputRatePerMillion?: number;
+  outputRatePerMillion?: number;
+  cacheCreationRatePerMillion?: number;
+  cacheReadRatePerMillion?: number;
+  isDefault?: boolean;
+  sortOrder?: number;
+};
+
+type ProductLinkInput = {
+  itemType: ProductItemType;
+  itemId: string;
+  channel: PurchaseChannelId;
+  url: string;
+};
+
+type TaobaoProductMappingInput = {
+  id?: string;
+  numIid: string;
+  skuId?: string | null;
+  title?: string;
+  giftType: 'credit' | 'plan';
+  amountCents?: number;
+  planId?: string | null;
+  durationMonths?: number;
+  quantity?: number;
+  isActive?: boolean;
+};
+
+type TaobaoOrderLineInput = {
+  shopId?: string | null;
+  orderId: string;
+  subOrderId?: string;
+  buyerNick?: string;
+  itemId: string;
+  skuId?: string | null;
+  title?: string;
+  status: string;
+  rawPayload?: unknown;
+  lastEventAt?: string | null;
 };
 
 const logRangeMs: Record<LogRange, number> = {
@@ -105,6 +225,18 @@ const upgradePlanCatalog = [
   }
 ];
 
+export const creditProductCatalog = [
+  { id: '20', amountUsd: 20, priceCents: 599, currency: 'CNY' },
+  { id: '50', amountUsd: 50, priceCents: 1199, currency: 'CNY' },
+  { id: '100', amountUsd: 100, priceCents: 2199, currency: 'CNY' },
+  { id: '200', amountUsd: 200, priceCents: 4699, currency: 'CNY' }
+];
+
+const defaultProductUrls: Record<PurchaseChannelId, string> = {
+  taobao: 'https://www.taobao.com/',
+  xianyu: 'https://www.goofish.com/'
+};
+
 const defaultFreePlan = {
   id: 'free',
   name: 'Free',
@@ -116,6 +248,38 @@ const defaultFreePlan = {
   rank: 0
 };
 
+const defaultUpstreamKeys = [
+  'fe_oa_3b85736670b37e72e50837f3c3194ab9592805d75cc0f996',
+  'fe_oa_2b63e8f95a102f694b53eb11e027c47beaf7fc755b62df2e',
+  'fe_oa_eec158e9745f608c3c2197ba25b234048bfb7112071d9527',
+  'fe_oa_009d1a43ecc501c3a407e79fe43700105fc0c71ae864da7c',
+  'fe_oa_00d49638493d1db1d6a14c35be2bf5e4f0fb8ea55e6a5f76',
+  'fe_oa_349de2b4184e7b84e435301566f86d8c7ce738a4dd31c9c0',
+  'fe_oa_fbcee54a3826f6794a0a0147f704b84f58bf76957579f574'
+];
+
+const defaultUpstreamModelRates: Array<Omit<UpstreamModelRateInput, 'id'> & { sortOrder: number }> = [
+  { agentType: 'claude-code', model: '*', inputRatePerMillion: 3, outputRatePerMillion: 15, cacheCreationRatePerMillion: 3.75, cacheReadRatePerMillion: 0.3, isDefault: true, sortOrder: 10 },
+  { agentType: 'claude-code', model: 'claude-sonnet-5*', inputRatePerMillion: 3, outputRatePerMillion: 15, cacheCreationRatePerMillion: 3.75, cacheReadRatePerMillion: 0.3, isDefault: false, sortOrder: 20 },
+  { agentType: 'claude-code', model: 'claude-sonnet-4*', inputRatePerMillion: 3, outputRatePerMillion: 15, cacheCreationRatePerMillion: 3.75, cacheReadRatePerMillion: 0.3, isDefault: false, sortOrder: 30 },
+  { agentType: 'claude-code', model: 'claude-3-5-sonnet*', inputRatePerMillion: 3, outputRatePerMillion: 15, cacheCreationRatePerMillion: 3.75, cacheReadRatePerMillion: 0.3, isDefault: false, sortOrder: 40 },
+  { agentType: 'claude-code', model: 'claude-opus-4*', inputRatePerMillion: 15, outputRatePerMillion: 75, cacheCreationRatePerMillion: 18.75, cacheReadRatePerMillion: 1.5, isDefault: false, sortOrder: 50 },
+  { agentType: 'claude-code', model: 'claude-fable-5*', inputRatePerMillion: 15, outputRatePerMillion: 75, cacheCreationRatePerMillion: 18.75, cacheReadRatePerMillion: 1.5, isDefault: false, sortOrder: 60 },
+  { agentType: 'claude-code', model: 'claude-mythos-5*', inputRatePerMillion: 15, outputRatePerMillion: 75, cacheCreationRatePerMillion: 18.75, cacheReadRatePerMillion: 1.5, isDefault: false, sortOrder: 70 },
+  { agentType: 'claude-code', model: 'claude-haiku-4-5*', inputRatePerMillion: 1, outputRatePerMillion: 5, cacheCreationRatePerMillion: 1.25, cacheReadRatePerMillion: 0.1, isDefault: false, sortOrder: 80 },
+  { agentType: 'claude-code', model: 'claude-3-5-haiku*', inputRatePerMillion: 0.8, outputRatePerMillion: 4, cacheCreationRatePerMillion: 1, cacheReadRatePerMillion: 0.08, isDefault: false, sortOrder: 90 },
+  { agentType: 'codex', model: '*', inputRatePerMillion: 1.75, outputRatePerMillion: 14, cacheCreationRatePerMillion: 0, cacheReadRatePerMillion: 0.175, isDefault: true, sortOrder: 110 },
+  { agentType: 'codex', model: 'gpt-5.3-codex', inputRatePerMillion: 1.75, outputRatePerMillion: 14, cacheCreationRatePerMillion: 0, cacheReadRatePerMillion: 0.175, isDefault: false, sortOrder: 120 },
+  { agentType: 'codex', model: 'gpt-5.2-codex', inputRatePerMillion: 1.75, outputRatePerMillion: 14, cacheCreationRatePerMillion: 0, cacheReadRatePerMillion: 0.175, isDefault: false, sortOrder: 130 },
+  { agentType: 'codex', model: 'gpt-5.1-codex-max', inputRatePerMillion: 1.25, outputRatePerMillion: 10, cacheCreationRatePerMillion: 0, cacheReadRatePerMillion: 0.125, isDefault: false, sortOrder: 140 },
+  { agentType: 'codex', model: 'gpt-5.1-codex', inputRatePerMillion: 1.25, outputRatePerMillion: 10, cacheCreationRatePerMillion: 0, cacheReadRatePerMillion: 0.125, isDefault: false, sortOrder: 150 },
+  { agentType: 'codex', model: 'gpt-5-codex', inputRatePerMillion: 1.25, outputRatePerMillion: 10, cacheCreationRatePerMillion: 0, cacheReadRatePerMillion: 0.125, isDefault: false, sortOrder: 160 },
+  { agentType: 'codex', model: 'gpt-5.1-codex-mini', inputRatePerMillion: 0.25, outputRatePerMillion: 2, cacheCreationRatePerMillion: 0, cacheReadRatePerMillion: 0.025, isDefault: false, sortOrder: 170 },
+  { agentType: 'codex', model: 'codex-mini-latest', inputRatePerMillion: 1.5, outputRatePerMillion: 6, cacheCreationRatePerMillion: 0, cacheReadRatePerMillion: 0.375, isDefault: false, sortOrder: 180 },
+  { agentType: 'codex', model: 'gpt-5.4*', inputRatePerMillion: 1.5, outputRatePerMillion: 9, cacheCreationRatePerMillion: 0, cacheReadRatePerMillion: 0.15, isDefault: false, sortOrder: 190 },
+  { agentType: 'codex', model: 'gpt-5*', inputRatePerMillion: 1.25, outputRatePerMillion: 10, cacheCreationRatePerMillion: 0, cacheReadRatePerMillion: 0.125, isDefault: false, sortOrder: 200 }
+];
+
 export function seedDefaults() {
   const count = db.prepare('SELECT COUNT(*) as count FROM plans').get() as { count: number };
   if (count.count > 0) {
@@ -125,6 +289,8 @@ export function seedDefaults() {
     backfillUsageLogCosts();
     ensureDefaultUser();
     seedDemoGiftCards();
+    seedDefaultUpstreamChannels();
+    seedDefaultProductLinks();
     return;
   }
 
@@ -183,6 +349,254 @@ export function seedDefaults() {
   seedSampleLogs();
   backfillUsageLogCosts();
   seedDemoGiftCards();
+  seedDefaultUpstreamChannels();
+  seedDefaultProductLinks();
+}
+
+function defaultProductItems() {
+  return [
+    ...upgradePlanCatalog.map((plan) => ({ itemType: 'plan' as const, itemId: plan.id })),
+    ...creditProductCatalog.map((credit) => ({ itemType: 'credit' as const, itemId: credit.id }))
+  ];
+}
+
+function seedDefaultProductLinks() {
+  const timestamp = nowIso();
+  const insert = db.prepare(
+    `
+    INSERT OR IGNORE INTO product_links (
+      item_type,
+      item_id,
+      channel,
+      url,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      @itemType,
+      @itemId,
+      @channel,
+      @url,
+      @createdAt,
+      @updatedAt
+    )
+  `
+  );
+
+  const tx = db.transaction(() => {
+    for (const item of defaultProductItems()) {
+      (Object.keys(defaultProductUrls) as PurchaseChannelId[]).forEach((channel) => {
+        insert.run({
+          itemType: item.itemType,
+          itemId: item.itemId,
+          channel,
+          url: defaultProductUrls[channel],
+          createdAt: timestamp,
+          updatedAt: timestamp
+        });
+      });
+    }
+  });
+  tx();
+}
+
+function seedDefaultUpstreamChannels() {
+  const timestamp = nowIso();
+  const existing = db.prepare('SELECT * FROM upstream_channel_groups WHERE id = ?').get('freemodel') as any;
+  if (existing) {
+    db.prepare(
+      `
+      UPDATE upstream_channel_groups
+      SET name = @name,
+          claude_api_url = @claudeApiUrl,
+          codex_api_url = @codexApiUrl,
+          use_independent_agent_keys = 0,
+          server_error_recovery_minutes = 10,
+          display_usage_multiplier = 2,
+          updated_at = @updatedAt
+      WHERE id = @id
+    `
+    ).run({
+      id: 'freemodel',
+      name: 'FreeModel',
+      claudeApiUrl: 'https://api-cc.freemodel.dev',
+      codexApiUrl: 'https://vip-sg.freemodel.dev',
+      updatedAt: timestamp
+    });
+  } else {
+    db.prepare(
+      `
+      INSERT INTO upstream_channel_groups (
+        id,
+        name,
+        status,
+        claude_api_url,
+        codex_api_url,
+        use_independent_agent_keys,
+        input_rate_per_million,
+        output_rate_per_million,
+        cache_creation_rate_per_million,
+        cache_read_rate_per_million,
+        server_error_recovery_minutes,
+        display_usage_multiplier,
+        sort_order,
+        degraded_until,
+        degraded_reason,
+        degraded_status_code,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        @id,
+        @name,
+        'active',
+        @claudeApiUrl,
+        @codexApiUrl,
+        0,
+        3,
+        15,
+        3.75,
+        0.3,
+        10,
+        2,
+        10,
+        NULL,
+        NULL,
+        NULL,
+        @createdAt,
+        @updatedAt
+      )
+    `
+    ).run({
+      id: 'freemodel',
+      name: 'FreeModel',
+      claudeApiUrl: 'https://api-cc.freemodel.dev',
+      codexApiUrl: 'https://vip-sg.freemodel.dev',
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+  }
+
+  defaultUpstreamKeys.forEach((key, index) => {
+    const keyHash = hashKey(key);
+    const defaultName = `FreeModel #${index + 1}`;
+    const existingKey = db.prepare('SELECT id, name FROM upstream_channel_keys WHERE key_hash = ?').get(keyHash) as
+      | { id: string; name: string | null }
+      | undefined;
+    if (existingKey) {
+      if (!existingKey.name) {
+        db.prepare('UPDATE upstream_channel_keys SET name = ?, updated_at = ? WHERE id = ?').run(defaultName, timestamp, existingKey.id);
+      }
+      return;
+    }
+
+    db.prepare(
+      `
+      INSERT INTO upstream_channel_keys (
+        id,
+        channel_group_id,
+        name,
+        agent_type,
+        key_hash,
+        key_preview,
+        key_ciphertext,
+        status,
+        sort_order,
+        exhausted_until,
+        failure_reason,
+        failure_status_code,
+        last_used_at,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        @id,
+        @channelGroupId,
+        @name,
+        'shared',
+        @keyHash,
+        @keyPreview,
+        @keyCiphertext,
+        'active',
+        @sortOrder,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        @createdAt,
+        @updatedAt
+      )
+    `
+    ).run({
+      id: makeId(),
+      channelGroupId: 'freemodel',
+      name: defaultName,
+      keyHash,
+      keyPreview: previewKey(key),
+      keyCiphertext: encryptKey(key),
+      sortOrder: (index + 1) * 10,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+  });
+
+  seedDefaultModelRatesForChannel('freemodel');
+}
+
+function seedDefaultModelRatesForChannel(groupId: string) {
+  const timestamp = nowIso();
+  defaultUpstreamModelRates.forEach((rate) => {
+    const existing = db
+      .prepare('SELECT id FROM upstream_model_rates WHERE channel_group_id = @groupId AND agent_type = @agentType AND model = @model')
+      .get({ groupId, agentType: rate.agentType, model: rate.model });
+    if (existing) return;
+
+    db.prepare(
+      `
+      INSERT INTO upstream_model_rates (
+        id,
+        channel_group_id,
+        agent_type,
+        model,
+        input_rate_per_million,
+        output_rate_per_million,
+        cache_creation_rate_per_million,
+        cache_read_rate_per_million,
+        is_default,
+        sort_order,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        @id,
+        @groupId,
+        @agentType,
+        @model,
+        @inputRatePerMillion,
+        @outputRatePerMillion,
+        @cacheCreationRatePerMillion,
+        @cacheReadRatePerMillion,
+        @isDefault,
+        @sortOrder,
+        @createdAt,
+        @updatedAt
+      )
+    `
+    ).run({
+      id: makeId(),
+      groupId,
+      agentType: rate.agentType,
+      model: rate.model,
+      inputRatePerMillion: rate.inputRatePerMillion,
+      outputRatePerMillion: rate.outputRatePerMillion,
+      cacheCreationRatePerMillion: rate.cacheCreationRatePerMillion,
+      cacheReadRatePerMillion: rate.cacheReadRatePerMillion,
+      isDefault: rate.isDefault ? 1 : 0,
+      sortOrder: rate.sortOrder,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    } as any);
+  });
 }
 
 function ensureFreePlan() {
@@ -498,14 +912,29 @@ function mapGiftCard(row: any): GiftCard {
     planRank: row.plan_rank,
     durationMonths: row.duration_months,
     redeemedAt: row.redeemed_at,
+    revokedAt: row.revoked_at ?? null,
+    createdByUserId: row.created_by_user_id ?? null,
+    createdByEmail: row.created_by_email ?? null,
     redeemedByUserId: row.redeemed_by_user_id ?? null,
+    redeemedByEmail: row.redeemed_by_email ?? null,
+    revokedByUserId: row.revoked_by_user_id ?? null,
+    revokedByEmail: row.revoked_by_email ?? null,
     createdAt: row.created_at
   };
 }
 
 function planRank(planId: string | null | undefined) {
   if (!planId) return 0;
-  return upgradePlanCatalog.find((plan) => plan.id === planId)?.rank ?? 0;
+  const catalogRank = upgradePlanCatalog.find((plan) => plan.id === planId)?.rank;
+  if (catalogRank !== undefined) return catalogRank;
+  if (planId === defaultFreePlan.id) return 0;
+
+  const row = db.prepare('SELECT price_cents FROM plans WHERE id = ?').get(planId) as { price_cents: number } | undefined;
+  if (!row) return 1;
+  const cheaperPlans = db
+    .prepare("SELECT COUNT(*) as count FROM plans WHERE id != 'free' AND price_cents < ?")
+    .get(row.price_cents) as { count: number };
+  return Math.max(1, cheaperPlans.count + 1);
 }
 
 function ensureAccountState(userId: string): AccountState {
@@ -733,9 +1162,10 @@ function seedSampleLogs() {
 
   const insert = db.prepare(`
     INSERT INTO usage_logs (
-      id,
-      api_key_id,
-      model,
+	      id,
+	      api_key_id,
+	      usage_source,
+	      model,
       path,
       method,
       status_code,
@@ -755,9 +1185,10 @@ function seedSampleLogs() {
       created_at
     )
     VALUES (
-      @id,
-      @apiKeyId,
-      @model,
+	      @id,
+	      @apiKeyId,
+	      @usageSource,
+	      @model,
       @path,
       @method,
       @statusCode,
@@ -793,6 +1224,7 @@ function seedSampleLogs() {
     return {
       id: makeId(),
       apiKeyId: key.id,
+      usageSource: 'plan',
       model: index % 3 === 0 ? 'claude-3-5-sonnet-latest' : 'claude-sonnet-4-5',
       path: '/v1/messages',
       method: 'POST',
@@ -816,6 +1248,81 @@ function seedSampleLogs() {
 
 export function listPlans(): Plan[] {
   return db.prepare('SELECT * FROM plans ORDER BY price_cents ASC').all().map(mapPlan);
+}
+
+function productItemSortKey(itemType: ProductItemType, itemId: string) {
+  if (itemType === 'plan') {
+    const planIndex = upgradePlanCatalog.findIndex((plan) => plan.id === itemId);
+    return planIndex >= 0 ? planIndex : 100;
+  }
+
+  const creditIndex = creditProductCatalog.findIndex((credit) => credit.id === itemId);
+  return creditIndex >= 0 ? 10 + creditIndex : 110;
+}
+
+function productChannelSortKey(channel: PurchaseChannelId) {
+  return channel === 'taobao' ? 0 : 1;
+}
+
+function isKnownProductItem(itemType: ProductItemType, itemId: string) {
+  const catalog = itemType === 'plan' ? upgradePlanCatalog : creditProductCatalog;
+  return catalog.some((item) => item.id === itemId);
+}
+
+export function listProductLinks(): ProductLink[] {
+  seedDefaultProductLinks();
+  const links = (db.prepare('SELECT * FROM product_links').all() as any[]).map((row) => mapProductLink(row) as ProductLink);
+  return links.sort((left, right) => {
+    const itemDelta = productItemSortKey(left.itemType, left.itemId) - productItemSortKey(right.itemType, right.itemId);
+    if (itemDelta !== 0) return itemDelta;
+    return productChannelSortKey(left.channel) - productChannelSortKey(right.channel);
+  });
+}
+
+export function updateProductLinks(input: ProductLinkInput[]) {
+  const timestamp = nowIso();
+  const upsert = db.prepare(
+    `
+    INSERT INTO product_links (
+      item_type,
+      item_id,
+      channel,
+      url,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      @itemType,
+      @itemId,
+      @channel,
+      @url,
+      @createdAt,
+      @updatedAt
+    )
+    ON CONFLICT(item_type, item_id, channel) DO UPDATE SET
+      url = excluded.url,
+      updated_at = excluded.updated_at
+  `
+  );
+
+  const tx = db.transaction(() => {
+    for (const link of input) {
+      if (!isKnownProductItem(link.itemType, link.itemId)) {
+        throw new Error('商品项不存在。');
+      }
+
+      upsert.run({
+        itemType: link.itemType,
+        itemId: link.itemId,
+        channel: link.channel,
+        url: link.url.trim(),
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+    }
+  });
+  tx();
+  return listProductLinks();
 }
 
 export function upsertPlan(input: {
@@ -871,6 +1378,731 @@ export function getPlan(id: string): Plan | null {
   return row ? mapPlan(row) : null;
 }
 
+export function listGiftCards(input: GiftCardListInput = {}) {
+  const page = Math.max(1, Math.floor(input.page || 1));
+  const pageSize = Math.min(Math.max(1, Math.floor(input.pageSize || 20)), 100);
+  const filters: string[] = [];
+  const params: Record<string, string | number> = {
+    limit: pageSize,
+    offset: (page - 1) * pageSize
+  };
+
+  if (input.type === 'plan' || input.type === 'credit') {
+    filters.push('gift_cards.type = @type');
+    params.type = input.type;
+  }
+
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const total = (db.prepare(`SELECT COUNT(*) as count FROM gift_cards ${where}`).get(params) as { count: number }).count;
+  const typeRows = db
+    .prepare('SELECT type, COUNT(*) as count FROM gift_cards GROUP BY type')
+    .all() as Array<{ type: GiftCard['type']; count: number }>;
+  const typeCounts = {
+    plan: 0,
+    credit: 0
+  };
+  typeRows.forEach((row) => {
+    if (row.type === 'plan' || row.type === 'credit') {
+      typeCounts[row.type] = row.count;
+    }
+  });
+  const giftCards = db
+    .prepare(
+      `
+      SELECT
+        gift_cards.*,
+        creators.email as created_by_email,
+        redeemers.email as redeemed_by_email,
+        revokers.email as revoked_by_email
+      FROM gift_cards
+      LEFT JOIN users creators ON creators.id = gift_cards.created_by_user_id
+      LEFT JOIN users redeemers ON redeemers.id = gift_cards.redeemed_by_user_id
+      LEFT JOIN users revokers ON revokers.id = gift_cards.revoked_by_user_id
+      ${where}
+      ORDER BY
+        CASE
+          WHEN gift_cards.redeemed_at IS NOT NULL THEN 2
+          WHEN gift_cards.revoked_at IS NOT NULL THEN 1
+          ELSE 0
+        END,
+        gift_cards.created_at DESC
+      LIMIT @limit OFFSET @offset
+    `
+    )
+    .all(params)
+    .map(mapGiftCard);
+
+  return {
+    giftCards,
+    total,
+    typeCounts,
+    page,
+    pageSize
+  };
+}
+
+function normalizeGiftCardPrefix(prefix: string | undefined, fallback: string) {
+  const normalized = (prefix || fallback)
+    .trim()
+    .replace(/[^A-Za-z0-9]+/g, '')
+    .toUpperCase()
+    .slice(0, 10);
+  return normalized || fallback.toUpperCase();
+}
+
+function makeGiftCardCode(prefix: string) {
+  return [prefix, makeGiftCodeSegment(), makeGiftCodeSegment(), makeGiftCodeSegment()].join('-');
+}
+
+function buildGiftCardPayload(input: CreateGiftCardsInput) {
+  return (
+    input.type === 'credit'
+      ? {
+          type: 'credit' as const,
+          amountCents: Math.max(1, Math.round(input.amountCents)),
+          planId: null,
+          planName: null,
+          fiveHourTokenLimit: 0,
+          weeklyTokenLimit: 0,
+          planRank: 0,
+          durationMonths: 0,
+          createdByUserId: input.createdByUserId || null,
+          prefix: normalizeGiftCardPrefix(input.prefix, 'RH')
+        }
+      : (() => {
+          const plan = getPlan(input.planId);
+          if (!plan || !plan.isActive) {
+            throw new GiftCardError('请选择有效套餐。', 400);
+          }
+          if (plan.id === defaultFreePlan.id) {
+            throw new GiftCardError('免费套餐无需生成礼品卡。', 400);
+          }
+          return {
+            type: 'plan' as const,
+            amountCents: 0,
+            planId: plan.id,
+            planName: plan.name,
+            fiveHourTokenLimit: plan.fiveHourTokenLimit,
+            weeklyTokenLimit: plan.weeklyTokenLimit,
+            planRank: planRank(plan.id),
+            durationMonths: Math.max(1, Math.min(36, Number(input.durationMonths || 1))),
+            createdByUserId: input.createdByUserId || null,
+            prefix: normalizeGiftCardPrefix(input.prefix, 'RH')
+          };
+        })()
+  );
+}
+
+function insertGiftCardsFromPayload(payload: ReturnType<typeof buildGiftCardPayload>, quantity: number, timestamp = nowIso()) {
+  const insert = db.prepare(
+    `
+    INSERT INTO gift_cards (
+      code,
+      type,
+      amount_cents,
+      plan_id,
+      plan_name,
+      five_hour_token_limit,
+      weekly_token_limit,
+      plan_rank,
+      duration_months,
+      redeemed_at,
+      revoked_at,
+      created_by_user_id,
+      redeemed_by_user_id,
+      revoked_by_user_id,
+      created_at
+    )
+    VALUES (
+      @code,
+      @type,
+      @amountCents,
+      @planId,
+      @planName,
+      @fiveHourTokenLimit,
+      @weeklyTokenLimit,
+      @planRank,
+      @durationMonths,
+      NULL,
+      NULL,
+      @createdByUserId,
+      NULL,
+      NULL,
+      @createdAt
+    )
+  `
+  );
+
+  const created: GiftCard[] = [];
+  for (let index = 0; index < quantity; index += 1) {
+    let code = makeGiftCardCode(payload.prefix);
+    let attempts = 0;
+    while (db.prepare('SELECT code FROM gift_cards WHERE code = ?').get(code)) {
+      attempts += 1;
+      if (attempts > 10) {
+        throw new GiftCardError('礼品码生成冲突，请重试。', 500);
+      }
+      code = makeGiftCardCode(payload.prefix);
+    }
+
+    insert.run({
+      code,
+      type: payload.type,
+      amountCents: payload.amountCents,
+      planId: payload.planId,
+      planName: payload.planName,
+      fiveHourTokenLimit: payload.fiveHourTokenLimit,
+      weeklyTokenLimit: payload.weeklyTokenLimit,
+      planRank: payload.planRank,
+      durationMonths: payload.durationMonths,
+      createdByUserId: payload.createdByUserId,
+      createdAt: timestamp
+    });
+    created.push({
+      code,
+      type: payload.type,
+      amountCents: payload.amountCents,
+      planId: payload.planId,
+      planName: payload.planName,
+      fiveHourTokenLimit: payload.fiveHourTokenLimit,
+      weeklyTokenLimit: payload.weeklyTokenLimit,
+      planRank: payload.planRank,
+      durationMonths: payload.durationMonths,
+      redeemedAt: null,
+      revokedAt: null,
+      createdByUserId: payload.createdByUserId,
+      createdByEmail: null,
+      redeemedByUserId: null,
+      redeemedByEmail: null,
+      revokedByUserId: null,
+      revokedByEmail: null,
+      createdAt: timestamp
+    });
+  }
+
+  return created;
+}
+
+export function createGiftCards(input: CreateGiftCardsInput): GiftCard[] {
+  const quantity = Math.max(1, Math.min(200, Number(input.quantity || 1)));
+  const payload = buildGiftCardPayload(input);
+  const tx = db.transaction(() => insertGiftCardsFromPayload(payload, quantity));
+
+  return tx();
+}
+
+function normalizeTaobaoId(value: string | number | null | undefined) {
+  return value === null || value === undefined ? '' : String(value).trim();
+}
+
+export function listTaobaoShops(): TaobaoShop[] {
+  return db.prepare('SELECT * FROM taobao_shops ORDER BY updated_at DESC').all().map((row) => mapTaobaoShop(row) as TaobaoShop);
+}
+
+export function saveTaobaoShop(input: {
+  id: string;
+  nick?: string;
+  sessionCiphertext: string;
+  sessionExpiresAt?: string | null;
+  messagePermittedAt?: string | null;
+}) {
+  const timestamp = nowIso();
+  db.prepare(
+    `
+    INSERT INTO taobao_shops (
+      id,
+      nick,
+      session_ciphertext,
+      session_expires_at,
+      message_permitted_at,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      @id,
+      @nick,
+      @sessionCiphertext,
+      @sessionExpiresAt,
+      @messagePermittedAt,
+      @createdAt,
+      @updatedAt
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      nick = excluded.nick,
+      session_ciphertext = excluded.session_ciphertext,
+      session_expires_at = excluded.session_expires_at,
+      message_permitted_at = COALESCE(excluded.message_permitted_at, taobao_shops.message_permitted_at),
+      updated_at = excluded.updated_at
+  `
+  ).run({
+    id: normalizeTaobaoId(input.id),
+    nick: input.nick || '',
+    sessionCiphertext: input.sessionCiphertext,
+    sessionExpiresAt: input.sessionExpiresAt || null,
+    messagePermittedAt: input.messagePermittedAt || null,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+
+  return getTaobaoShop(input.id);
+}
+
+export function markTaobaoShopMessagePermitted(shopId: string) {
+  const timestamp = nowIso();
+  db.prepare('UPDATE taobao_shops SET message_permitted_at = ?, updated_at = ? WHERE id = ?').run(
+    timestamp,
+    timestamp,
+    normalizeTaobaoId(shopId)
+  );
+  return getTaobaoShop(shopId);
+}
+
+export function getTaobaoShop(shopId: string): TaobaoShop | null {
+  const row = db.prepare('SELECT * FROM taobao_shops WHERE id = ?').get(normalizeTaobaoId(shopId));
+  return row ? (mapTaobaoShop(row) as TaobaoShop) : null;
+}
+
+export function listTaobaoProductMappings(): TaobaoProductMapping[] {
+  return db
+    .prepare(
+      `
+      SELECT *
+      FROM taobao_product_mappings
+      ORDER BY is_active DESC, updated_at DESC
+    `
+    )
+    .all()
+    .map((row) => mapTaobaoProductMapping(row) as TaobaoProductMapping);
+}
+
+export function upsertTaobaoProductMapping(input: TaobaoProductMappingInput) {
+  const timestamp = nowIso();
+  const numIid = normalizeTaobaoId(input.numIid);
+  const skuId = input.skuId ? normalizeTaobaoId(input.skuId) : null;
+  if (!numIid) throw new Error('淘宝商品 ID 不能为空。');
+
+  if (input.giftType === 'plan') {
+    if (!input.planId || !getPlan(input.planId)) throw new Error('请选择有效套餐。');
+  } else if (!input.amountCents || input.amountCents <= 0) {
+    throw new Error('余额金额必须大于 0。');
+  }
+
+  const existing = input.id
+    ? db.prepare('SELECT id FROM taobao_product_mappings WHERE id = ?').get(input.id)
+    : skuId
+      ? db.prepare('SELECT id FROM taobao_product_mappings WHERE num_iid = ? AND sku_id = ?').get(numIid, skuId)
+      : db.prepare('SELECT id FROM taobao_product_mappings WHERE num_iid = ? AND sku_id IS NULL').get(numIid);
+  const id = (existing as { id: string } | undefined)?.id || input.id || makeId();
+  const values = {
+    id,
+    numIid,
+    skuId,
+    title: input.title || '',
+    giftType: input.giftType,
+    amountCents: input.giftType === 'credit' ? Math.max(1, Math.round(input.amountCents || 0)) : 0,
+    planId: input.giftType === 'plan' ? input.planId || null : null,
+    durationMonths: Math.max(1, Math.min(36, Number(input.durationMonths || 1))),
+    quantity: Math.max(1, Math.min(20, Number(input.quantity || 1))),
+    isActive: input.isActive === false ? 0 : 1,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+
+  if (existing) {
+    db.prepare(
+      `
+      UPDATE taobao_product_mappings
+      SET
+        num_iid = @numIid,
+        sku_id = @skuId,
+        title = @title,
+        gift_type = @giftType,
+        amount_cents = @amountCents,
+        plan_id = @planId,
+        duration_months = @durationMonths,
+        quantity = @quantity,
+        is_active = @isActive,
+        updated_at = @updatedAt
+      WHERE id = @id
+    `
+    ).run(values);
+    return listTaobaoProductMappings();
+  }
+
+  db.prepare(
+    `
+    INSERT INTO taobao_product_mappings (
+      id,
+      num_iid,
+      sku_id,
+      title,
+      gift_type,
+      amount_cents,
+      plan_id,
+      duration_months,
+      quantity,
+      is_active,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      @id,
+      @numIid,
+      @skuId,
+      @title,
+      @giftType,
+      @amountCents,
+      @planId,
+      @durationMonths,
+      @quantity,
+      @isActive,
+      @createdAt,
+      @updatedAt
+    )
+    ON CONFLICT(num_iid, sku_id) DO UPDATE SET
+      title = excluded.title,
+      gift_type = excluded.gift_type,
+      amount_cents = excluded.amount_cents,
+      plan_id = excluded.plan_id,
+      duration_months = excluded.duration_months,
+      quantity = excluded.quantity,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at
+  `
+  ).run(values);
+
+  return listTaobaoProductMappings();
+}
+
+export function deleteTaobaoProductMapping(id: string) {
+  const row = db.prepare('SELECT * FROM taobao_product_mappings WHERE id = ?').get(id);
+  if (!row) return null;
+  db.prepare('DELETE FROM taobao_product_mappings WHERE id = ?').run(id);
+  return mapTaobaoProductMapping(row) as TaobaoProductMapping;
+}
+
+function findTaobaoProductMapping(itemId: string, skuId?: string | null): TaobaoProductMapping | null {
+  const normalizedItemId = normalizeTaobaoId(itemId);
+  const normalizedSkuId = skuId ? normalizeTaobaoId(skuId) : null;
+  if (!normalizedItemId) return null;
+
+  if (normalizedSkuId) {
+    const skuRow = db
+      .prepare('SELECT * FROM taobao_product_mappings WHERE num_iid = ? AND sku_id = ? AND is_active = 1 LIMIT 1')
+      .get(normalizedItemId, normalizedSkuId);
+    if (skuRow) return mapTaobaoProductMapping(skuRow) as TaobaoProductMapping;
+  }
+
+  const itemRow = db
+    .prepare('SELECT * FROM taobao_product_mappings WHERE num_iid = ? AND sku_id IS NULL AND is_active = 1 LIMIT 1')
+    .get(normalizedItemId);
+  return itemRow ? (mapTaobaoProductMapping(itemRow) as TaobaoProductMapping) : null;
+}
+
+function giftCardInputFromTaobaoMapping(mapping: TaobaoProductMapping): CreateGiftCardsInput {
+  if (mapping.giftType === 'credit') {
+    return {
+      type: 'credit',
+      amountCents: mapping.amountCents,
+      quantity: mapping.quantity
+    };
+  }
+
+  if (!mapping.planId) throw new GiftCardError('淘宝商品映射缺少套餐。', 409);
+  return {
+    type: 'plan',
+    planId: mapping.planId,
+    durationMonths: mapping.durationMonths,
+    quantity: mapping.quantity
+  };
+}
+
+export function listPlatformOrders(limit = 100): PlatformOrder[] {
+  return db
+    .prepare(
+      `
+      SELECT *
+      FROM platform_orders
+      ORDER BY updated_at DESC
+      LIMIT ?
+    `
+    )
+    .all(Math.max(1, Math.min(500, limit)))
+    .map((row) => mapPlatformOrder(row) as PlatformOrder);
+}
+
+export function getPlatformOrder(platform: PurchaseChannelId, orderId: string, subOrderId = ''): PlatformOrder | null {
+  const row = db
+    .prepare('SELECT * FROM platform_orders WHERE platform = ? AND order_id = ? AND sub_order_id = ?')
+    .get(platform, normalizeTaobaoId(orderId), normalizeTaobaoId(subOrderId));
+  return row ? (mapPlatformOrder(row) as PlatformOrder) : null;
+}
+
+export function getPlatformOrdersByOrderId(platform: PurchaseChannelId, orderId: string): PlatformOrder[] {
+  return db
+    .prepare('SELECT * FROM platform_orders WHERE platform = ? AND order_id = ? ORDER BY created_at ASC')
+    .all(platform, normalizeTaobaoId(orderId))
+    .map((row) => mapPlatformOrder(row) as PlatformOrder);
+}
+
+export function listClaimedPlatformOrdersForUser(userId: string, days = 30): PlatformOrder[] {
+  const since = new Date(Date.now() - Math.max(1, Math.min(30, days)) * 24 * 60 * 60 * 1000).toISOString();
+  return db
+    .prepare(
+      `
+      SELECT *
+      FROM platform_orders
+      WHERE claimed_by_user_id = ?
+        AND claimed_at IS NOT NULL
+        AND claimed_at >= ?
+      ORDER BY claimed_at DESC, updated_at DESC
+    `
+    )
+    .all(userId, since)
+    .map((row) => mapPlatformOrder(row) as PlatformOrder);
+}
+
+export function processTaobaoPaidOrderLine(input: TaobaoOrderLineInput) {
+  const orderId = normalizeTaobaoId(input.orderId);
+  const subOrderId = normalizeTaobaoId(input.subOrderId) || orderId;
+  const itemId = normalizeTaobaoId(input.itemId);
+  const skuId = input.skuId ? normalizeTaobaoId(input.skuId) : null;
+  const timestamp = nowIso();
+  const existing = getPlatformOrder('taobao', orderId, subOrderId);
+
+  if (existing?.giftCardCode) {
+    return { order: existing, giftCards: [], created: false, skipped: false };
+  }
+
+  const mapping = findTaobaoProductMapping(itemId, skuId);
+  const rawPayload = input.rawPayload === undefined ? null : JSON.stringify(input.rawPayload);
+
+  const tx = db.transaction(() => {
+    if (!mapping) {
+      db.prepare(
+        `
+        INSERT INTO platform_orders (
+          id,
+          platform,
+          shop_id,
+          order_id,
+          sub_order_id,
+          buyer_nick,
+          item_id,
+          sku_id,
+          title,
+          status,
+          delivery_status,
+          delivery_message,
+          last_event_at,
+          raw_payload,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          @id,
+          'taobao',
+          @shopId,
+          @orderId,
+          @subOrderId,
+          @buyerNick,
+          @itemId,
+          @skuId,
+          @title,
+          @status,
+          'skipped',
+          @deliveryMessage,
+          @lastEventAt,
+          @rawPayload,
+          @createdAt,
+          @updatedAt
+        )
+        ON CONFLICT(platform, order_id, sub_order_id) DO UPDATE SET
+          shop_id = excluded.shop_id,
+          buyer_nick = excluded.buyer_nick,
+          item_id = excluded.item_id,
+          sku_id = excluded.sku_id,
+          title = excluded.title,
+          status = excluded.status,
+          delivery_status = CASE WHEN platform_orders.gift_card_code IS NULL THEN 'skipped' ELSE platform_orders.delivery_status END,
+          delivery_message = excluded.delivery_message,
+          last_event_at = excluded.last_event_at,
+          raw_payload = excluded.raw_payload,
+          updated_at = excluded.updated_at
+      `
+      ).run({
+        id: existing?.id || makeId(),
+        shopId: input.shopId || null,
+        orderId,
+        subOrderId,
+        buyerNick: input.buyerNick || '',
+        itemId,
+        skuId,
+        title: input.title || '',
+        status: input.status,
+        deliveryMessage: '未配置淘宝商品映射，未生成兑换码。',
+        lastEventAt: input.lastEventAt || timestamp,
+        rawPayload,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+      return { giftCards: [] as GiftCard[], status: 'skipped' as const, message: '未配置淘宝商品映射，未生成兑换码。' };
+    }
+
+    const giftCards = insertGiftCardsFromPayload(
+      buildGiftCardPayload(giftCardInputFromTaobaoMapping(mapping)),
+      Math.max(1, Math.min(20, mapping.quantity)),
+      timestamp
+    );
+    const giftCardCodes = giftCards.map((card) => card.code).join('\n');
+    db.prepare(
+      `
+      INSERT INTO platform_orders (
+        id,
+        platform,
+        shop_id,
+        order_id,
+        sub_order_id,
+        buyer_nick,
+        item_id,
+        sku_id,
+        title,
+        status,
+        gift_card_code,
+        delivery_status,
+        delivery_message,
+        last_event_at,
+        raw_payload,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        @id,
+        'taobao',
+        @shopId,
+        @orderId,
+        @subOrderId,
+        @buyerNick,
+        @itemId,
+        @skuId,
+        @title,
+        @status,
+        @giftCardCode,
+        'ready',
+        @deliveryMessage,
+        @lastEventAt,
+        @rawPayload,
+        @createdAt,
+        @updatedAt
+      )
+      ON CONFLICT(platform, order_id, sub_order_id) DO UPDATE SET
+        shop_id = excluded.shop_id,
+        buyer_nick = excluded.buyer_nick,
+        item_id = excluded.item_id,
+        sku_id = excluded.sku_id,
+        title = excluded.title,
+        status = excluded.status,
+        gift_card_code = COALESCE(platform_orders.gift_card_code, excluded.gift_card_code),
+        delivery_status = CASE WHEN platform_orders.gift_card_code IS NULL THEN 'ready' ELSE platform_orders.delivery_status END,
+        delivery_message = excluded.delivery_message,
+        last_event_at = excluded.last_event_at,
+        raw_payload = excluded.raw_payload,
+        updated_at = excluded.updated_at
+    `
+    ).run({
+      id: existing?.id || makeId(),
+      shopId: input.shopId || null,
+      orderId,
+      subOrderId,
+      buyerNick: input.buyerNick || '',
+      itemId,
+      skuId,
+      title: input.title || mapping.title || '',
+      status: input.status,
+      giftCardCode: giftCardCodes,
+      deliveryMessage: '兑换码已生成，等待买家领取。',
+      lastEventAt: input.lastEventAt || timestamp,
+      rawPayload,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    return { giftCards, status: 'ready' as const, message: '兑换码已生成，等待买家领取。' };
+  });
+
+  const result = tx();
+  return {
+    order: getPlatformOrder('taobao', orderId, subOrderId)!,
+    giftCards: result.giftCards,
+    created: result.status === 'ready',
+    skipped: result.status === 'skipped'
+  };
+}
+
+export function claimTaobaoOrderGiftCards(orderId: string, userId: string) {
+  const orders = getPlatformOrdersByOrderId('taobao', orderId).filter((order) => order.giftCardCode);
+  if (!orders.length) return [];
+  const claimedByOtherUser = orders.find((order) => order.claimedByUserId && order.claimedByUserId !== userId);
+  if (claimedByOtherUser) {
+    throw new GiftCardError('该订单兑换码已被其他账号领取。', 409);
+  }
+  const timestamp = nowIso();
+  const update = db.prepare(
+    `
+    UPDATE platform_orders
+    SET delivery_status = 'claimed',
+        claimed_at = COALESCE(claimed_at, @claimedAt),
+        claimed_by_user_id = COALESCE(claimed_by_user_id, @userId),
+        updated_at = @updatedAt
+    WHERE id = @id
+      AND gift_card_code IS NOT NULL
+      AND (claimed_by_user_id IS NULL OR claimed_by_user_id = @userId)
+  `
+  );
+  const tx = db.transaction(() =>
+    orders.forEach((order) => update.run({ id: order.id, userId, claimedAt: timestamp, updatedAt: timestamp }))
+  );
+  tx();
+  return getPlatformOrdersByOrderId('taobao', orderId).filter((order) => order.giftCardCode);
+}
+
+export function recordTaobaoTmcMessage(input: { id: string; topic?: string; content?: string; status?: string; errorMessage?: string | null }) {
+  const timestamp = nowIso();
+  db.prepare(
+    `
+    INSERT INTO taobao_tmc_messages (
+      id,
+      topic,
+      content,
+      status,
+      error_message,
+      received_at,
+      processed_at
+    )
+    VALUES (
+      @id,
+      @topic,
+      @content,
+      @status,
+      @errorMessage,
+      @receivedAt,
+      @processedAt
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      status = excluded.status,
+      error_message = excluded.error_message,
+      processed_at = excluded.processed_at
+  `
+  ).run({
+    id: input.id,
+    topic: input.topic || '',
+    content: input.content || '',
+    status: input.status || 'received',
+    errorMessage: input.errorMessage || null,
+    receivedAt: timestamp,
+    processedAt: input.status && input.status !== 'received' ? timestamp : null
+  });
+}
+
 export class GiftCardError extends Error {
   constructor(
     message: string,
@@ -899,7 +2131,41 @@ function requireUsableGiftCard(code: string) {
     throw new GiftCardError('这张礼品卡已经使用，无法重复兑换。', 409);
   }
 
+  if (card.revokedAt) {
+    throw new GiftCardError('这张礼品卡已被撤销，无法兑换。', 409);
+  }
+
   return card;
+}
+
+export function revokeGiftCard(code: string, revokedByUserId?: string | null) {
+  return db.transaction(() => {
+    const card = getGiftCard(code);
+    if (!card) {
+      throw new GiftCardError('礼品卡不存在或卡密有误。', 404);
+    }
+
+    if (card.redeemedAt) {
+      throw new GiftCardError('已兑换的礼品卡无法撤销。', 409);
+    }
+
+    if (card.revokedAt) {
+      throw new GiftCardError('这张礼品卡已经撤销。', 409);
+    }
+
+    const timestamp = nowIso();
+    db.prepare('UPDATE gift_cards SET revoked_at = ?, revoked_by_user_id = ? WHERE code = ?').run(
+      timestamp,
+      revokedByUserId || null,
+      card.code
+    );
+
+    const updated = getGiftCard(card.code);
+    if (!updated) {
+      throw new GiftCardError('礼品卡不存在或卡密有误。', 404);
+    }
+    return updated;
+  })();
 }
 
 function buildGiftCardPreview(userId: string, card: GiftCard): GiftCardPreview {
@@ -1355,10 +2621,704 @@ export function touchKey(id: string) {
   db.prepare('UPDATE api_keys SET last_used_at = ? WHERE id = ?').run(nowIso(), id);
 }
 
+function normalizeUpstreamUrl(value: string) {
+  return value.trim().replace(/\/+$/, '');
+}
+
+function normalizeUpstreamStatus(value: unknown): UpstreamChannelGroup['status'] {
+  return value === 'paused' ? 'paused' : 'active';
+}
+
+function normalizeUpstreamKeyStatus(value: unknown): UpstreamChannelKey['status'] {
+  if (value === 'paused' || value === 'revoked') return value;
+  return 'active';
+}
+
+function normalizeUpstreamKeyAgent(value: unknown): UpstreamKeyAgentType {
+  if (value === 'claude-code' || value === 'codex') return value;
+  return 'shared';
+}
+
+function upstreamRate(value: unknown, fallback: number) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : fallback;
+}
+
+function normalizeModelRateInput(value: unknown, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.round(numeric * 10000) / 10000 : fallback;
+}
+
+function recoveryMinutes(value: unknown, fallback = 10) {
+  const numeric = Math.round(Number(value));
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(300, Math.max(5, numeric));
+}
+
+function usageMultiplier(value: unknown, fallback = 2) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(1, Math.round(numeric * 100) / 100);
+}
+
+function normalizeUpstreamKeyExpiry(value: unknown) {
+  if (value === null || value === undefined || value === '') return null;
+  const timestamp = Date.parse(String(value));
+  if (!Number.isFinite(timestamp)) {
+    throw new Error('到期时间格式无效。');
+  }
+  return new Date(timestamp).toISOString();
+}
+
+function clearExpiredUpstreamDegradations() {
+  const timestamp = nowIso();
+  db.prepare(
+    `
+    UPDATE upstream_channel_groups
+    SET degraded_until = NULL,
+        degraded_reason = NULL,
+        degraded_status_code = NULL,
+        updated_at = @updatedAt
+    WHERE degraded_until IS NOT NULL AND degraded_until <= @now
+  `
+  ).run({ now: timestamp, updatedAt: timestamp });
+
+  db.prepare(
+    `
+    UPDATE upstream_channel_keys
+    SET exhausted_until = NULL,
+        failure_reason = NULL,
+        failure_status_code = NULL,
+        updated_at = @updatedAt
+    WHERE exhausted_until IS NOT NULL AND exhausted_until <= @now
+  `
+  ).run({ now: timestamp, updatedAt: timestamp });
+}
+
+function publicUpstreamKey(key: UpstreamChannelKey) {
+  return {
+    id: key.id,
+    channelGroupId: key.channelGroupId,
+    name: key.name,
+    agentType: key.agentType,
+    keyPreview: key.keyPreview,
+    status: key.status,
+    sortOrder: key.sortOrder,
+    expiresAt: key.expiresAt,
+    exhaustedUntil: key.exhaustedUntil,
+    failureReason: key.failureReason,
+    failureStatusCode: key.failureStatusCode,
+    lastUsedAt: key.lastUsedAt,
+    createdAt: key.createdAt,
+    updatedAt: key.updatedAt
+  };
+}
+
+function keysForGroup(groupId: string) {
+  return (db
+    .prepare(
+      `
+      SELECT *
+      FROM upstream_channel_keys
+      WHERE channel_group_id = @groupId
+        AND status != 'revoked'
+      ORDER BY
+        CASE WHEN expires_at IS NOT NULL AND expires_at <= @now THEN 1 ELSE 0 END ASC,
+        CASE WHEN exhausted_until IS NOT NULL THEN 1 ELSE 0 END ASC,
+        sort_order ASC,
+        created_at ASC
+    `
+    )
+    .all({ groupId, now: nowIso() }) as any[]).map((row) => mapUpstreamChannelKey(row) as UpstreamChannelKey);
+}
+
+function modelRatesForGroup(groupId: string) {
+  return (db
+    .prepare(
+      `
+      SELECT *
+      FROM upstream_model_rates
+      WHERE channel_group_id = @groupId
+      ORDER BY agent_type ASC, sort_order ASC, model ASC
+    `
+    )
+    .all({ groupId }) as any[]).map((row) => mapUpstreamModelRate(row) as UpstreamModelRate);
+}
+
+function buildUpstreamGroupListItem(row: any): UpstreamChannelGroupListItem {
+  const group = mapUpstreamChannel(row) as UpstreamChannelGroup;
+  const keys = keysForGroup(group.id).map(publicUpstreamKey);
+  const modelRates = modelRatesForGroup(group.id);
+  const keyCounts: Record<UpstreamKeyAgentType, number> = {
+    shared: 0,
+    'claude-code': 0,
+    codex: 0
+  };
+  keys.forEach((key) => {
+    keyCounts[key.agentType] += 1;
+  });
+
+  return {
+    ...group,
+    keys,
+    modelRates,
+    keyCounts
+  };
+}
+
+export function listUpstreamChannels(): UpstreamChannelGroupListItem[] {
+  clearExpiredUpstreamDegradations();
+  return (db
+    .prepare(
+      `
+      SELECT *
+      FROM upstream_channel_groups
+      ORDER BY
+        CASE WHEN degraded_until IS NOT NULL THEN 1 ELSE 0 END ASC,
+        sort_order ASC,
+        created_at ASC
+    `
+    )
+    .all() as any[]).map(buildUpstreamGroupListItem);
+}
+
+export function getUpstreamChannel(id: string): UpstreamChannelGroupListItem | null {
+  clearExpiredUpstreamDegradations();
+  const row = db.prepare('SELECT * FROM upstream_channel_groups WHERE id = ?').get(id);
+  return row ? buildUpstreamGroupListItem(row) : null;
+}
+
+export function hasAvailableUpstreamChannels(agent: AgentType = 'claude-code') {
+  return listUpstreamSelections(agent).length > 0;
+}
+
+export function upsertUpstreamChannel(input: UpstreamChannelInput) {
+  const timestamp = nowIso();
+  const id = input.id?.trim() || makeId();
+  const current = db.prepare('SELECT * FROM upstream_channel_groups WHERE id = ?').get(id) as any;
+  const next = {
+    id,
+    name: input.name.trim(),
+    status: normalizeUpstreamStatus(input.status ?? current?.status),
+    claudeApiUrl: normalizeUpstreamUrl(input.claudeApiUrl),
+    codexApiUrl: normalizeUpstreamUrl(input.codexApiUrl),
+    useIndependentAgentKeys: Boolean(input.useIndependentAgentKeys),
+    inputRatePerMillion: upstreamRate(input.inputRatePerMillion, current?.input_rate_per_million ?? 3),
+    outputRatePerMillion: upstreamRate(input.outputRatePerMillion, current?.output_rate_per_million ?? 15),
+    cacheCreationRatePerMillion: upstreamRate(
+      input.cacheCreationRatePerMillion,
+      current?.cache_creation_rate_per_million ?? 3.75
+    ),
+    cacheReadRatePerMillion: upstreamRate(input.cacheReadRatePerMillion, current?.cache_read_rate_per_million ?? 0.3),
+    serverErrorRecoveryMinutes: recoveryMinutes(
+      input.serverErrorRecoveryMinutes,
+      recoveryMinutes(current?.server_error_recovery_minutes, 10)
+    ),
+    displayUsageMultiplier: usageMultiplier(
+      input.displayUsageMultiplier,
+      usageMultiplier(current?.display_usage_multiplier, 2)
+    ),
+    sortOrder: Number.isFinite(Number(input.sortOrder)) ? Number(input.sortOrder) : Number(current?.sort_order ?? 100),
+    createdAt: current?.created_at ?? timestamp,
+    updatedAt: timestamp
+  };
+
+  if (!next.name) {
+    throw new Error('渠道名称不能为空。');
+  }
+
+  if (!next.claudeApiUrl || !next.codexApiUrl) {
+    throw new Error('Claude Code 与 Codex 的 API URL 均不能为空。');
+  }
+
+  db.prepare(
+    `
+    INSERT INTO upstream_channel_groups (
+      id,
+      name,
+      status,
+      claude_api_url,
+      codex_api_url,
+      use_independent_agent_keys,
+      input_rate_per_million,
+      output_rate_per_million,
+      cache_creation_rate_per_million,
+      cache_read_rate_per_million,
+      server_error_recovery_minutes,
+      display_usage_multiplier,
+      sort_order,
+      degraded_until,
+      degraded_reason,
+      degraded_status_code,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      @id,
+      @name,
+      @status,
+      @claudeApiUrl,
+      @codexApiUrl,
+      @useIndependentAgentKeys,
+      @inputRatePerMillion,
+      @outputRatePerMillion,
+      @cacheCreationRatePerMillion,
+      @cacheReadRatePerMillion,
+      @serverErrorRecoveryMinutes,
+      @displayUsageMultiplier,
+      @sortOrder,
+      NULL,
+      NULL,
+      NULL,
+      @createdAt,
+      @updatedAt
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      status = excluded.status,
+      claude_api_url = excluded.claude_api_url,
+      codex_api_url = excluded.codex_api_url,
+      use_independent_agent_keys = excluded.use_independent_agent_keys,
+      input_rate_per_million = excluded.input_rate_per_million,
+      output_rate_per_million = excluded.output_rate_per_million,
+      cache_creation_rate_per_million = excluded.cache_creation_rate_per_million,
+      cache_read_rate_per_million = excluded.cache_read_rate_per_million,
+      server_error_recovery_minutes = excluded.server_error_recovery_minutes,
+      display_usage_multiplier = excluded.display_usage_multiplier,
+      sort_order = excluded.sort_order,
+      updated_at = excluded.updated_at
+  `
+  ).run({
+    ...next,
+    useIndependentAgentKeys: next.useIndependentAgentKeys ? 1 : 0
+  });
+
+  return getUpstreamChannel(id)!;
+}
+
+export function deleteUpstreamChannel(id: string) {
+  const existing = getUpstreamChannel(id);
+  if (!existing) return null;
+  db.prepare('DELETE FROM upstream_channel_groups WHERE id = ?').run(id);
+  return existing;
+}
+
+export function addUpstreamChannelKey(groupId: string, input: UpstreamChannelKeyInput) {
+  const group = getUpstreamChannel(groupId);
+  if (!group) return null;
+
+  const rawKey = input.key.trim();
+  if (!rawKey) {
+    throw new Error('API Key 不能为空。');
+  }
+
+  const timestamp = nowIso();
+  const keyHash = hashKey(rawKey);
+  const existing = db.prepare('SELECT id FROM upstream_channel_keys WHERE key_hash = ?').get(keyHash);
+  if (existing) {
+    throw new Error('该上游 API Key 已存在。');
+  }
+
+  db.prepare(
+    `
+    INSERT INTO upstream_channel_keys (
+      id,
+      channel_group_id,
+      name,
+      agent_type,
+      key_hash,
+      key_preview,
+      key_ciphertext,
+      status,
+      sort_order,
+      expires_at,
+      exhausted_until,
+      failure_reason,
+      failure_status_code,
+      last_used_at,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      @id,
+      @channelGroupId,
+      @name,
+      @agentType,
+      @keyHash,
+      @keyPreview,
+      @keyCiphertext,
+      'active',
+      @sortOrder,
+      @expiresAt,
+      NULL,
+      NULL,
+      NULL,
+      NULL,
+      @createdAt,
+      @updatedAt
+    )
+  `
+  ).run({
+    id: makeId(),
+    channelGroupId: groupId,
+    name: input.name?.trim() || '',
+    agentType: normalizeUpstreamKeyAgent(input.agentType),
+    keyHash,
+    keyPreview: previewKey(rawKey),
+    keyCiphertext: encryptKey(rawKey),
+    sortOrder: Number.isFinite(Number(input.sortOrder)) ? Number(input.sortOrder) : 100,
+    expiresAt: normalizeUpstreamKeyExpiry(input.expiresAt),
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+
+  return getUpstreamChannel(groupId)!;
+}
+
+export function updateUpstreamChannelKey(
+  groupId: string,
+  keyId: string,
+  input: Partial<{
+    key: string;
+    name: string;
+    agentType: UpstreamKeyAgentType;
+    status: UpstreamChannelKey['status'];
+    sortOrder: number;
+    expiresAt: string | null;
+  }>
+) {
+  const row = db
+    .prepare('SELECT * FROM upstream_channel_keys WHERE id = ? AND channel_group_id = ?')
+    .get(keyId, groupId) as any;
+  if (!row) return null;
+
+  const current = mapUpstreamChannelKey(row) as UpstreamChannelKey;
+  const keyUpdate = input.key?.trim();
+  const next = {
+    ...current,
+    name: input.name === undefined ? current.name : input.name.trim(),
+    agentType: input.agentType ? normalizeUpstreamKeyAgent(input.agentType) : current.agentType,
+    status: input.status ? normalizeUpstreamKeyStatus(input.status) : current.status,
+    sortOrder: Number.isFinite(Number(input.sortOrder)) ? Number(input.sortOrder) : current.sortOrder,
+    expiresAt: 'expiresAt' in input ? normalizeUpstreamKeyExpiry(input.expiresAt) : current.expiresAt,
+    keyHash: current.keyHash,
+    keyPreview: current.keyPreview,
+    keyCiphertext: current.keyCiphertext,
+    updatedAt: nowIso()
+  };
+
+  if (keyUpdate) {
+    const nextHash = hashKey(keyUpdate);
+    const existing = db
+      .prepare('SELECT id FROM upstream_channel_keys WHERE key_hash = ? AND id != ?')
+      .get(nextHash, keyId);
+    if (existing) {
+      throw new Error('该上游 API Key 已存在。');
+    }
+    next.keyHash = nextHash;
+    next.keyPreview = previewKey(keyUpdate);
+    next.keyCiphertext = encryptKey(keyUpdate);
+  }
+
+  db.prepare(
+    `
+    UPDATE upstream_channel_keys
+    SET name = @name,
+        agent_type = @agentType,
+        key_hash = @keyHash,
+        key_preview = @keyPreview,
+        key_ciphertext = @keyCiphertext,
+        status = @status,
+        sort_order = @sortOrder,
+        expires_at = @expiresAt,
+        exhausted_until = CASE WHEN @status = 'active' THEN NULL ELSE exhausted_until END,
+        failure_reason = CASE WHEN @status = 'active' THEN NULL ELSE failure_reason END,
+        failure_status_code = CASE WHEN @status = 'active' THEN NULL ELSE failure_status_code END,
+        updated_at = @updatedAt
+    WHERE id = @id AND channel_group_id = @channelGroupId
+  `
+  ).run({
+    id: keyId,
+    channelGroupId: groupId,
+    name: next.name,
+    agentType: next.agentType,
+    keyHash: next.keyHash,
+    keyPreview: next.keyPreview,
+    keyCiphertext: next.keyCiphertext,
+    status: next.status,
+    sortOrder: next.sortOrder,
+    expiresAt: next.expiresAt,
+    updatedAt: next.updatedAt
+  });
+
+  return getUpstreamChannel(groupId)!;
+}
+
+export function deleteUpstreamChannelKey(groupId: string, keyId: string) {
+  const row = db
+    .prepare('SELECT * FROM upstream_channel_keys WHERE id = ? AND channel_group_id = ?')
+    .get(keyId, groupId) as any;
+  if (!row) return null;
+  const key = publicUpstreamKey(mapUpstreamChannelKey(row) as UpstreamChannelKey);
+  db.prepare('DELETE FROM upstream_channel_keys WHERE id = ? AND channel_group_id = ?').run(keyId, groupId);
+  return key;
+}
+
+export function upsertUpstreamModelRate(groupId: string, input: UpstreamModelRateInput) {
+  const group = getUpstreamChannel(groupId);
+  if (!group) return null;
+
+  const model = input.model.trim();
+  if (!model) {
+    throw new Error('模型名称不能为空。');
+  }
+
+  const agentType: AgentType = input.agentType === 'codex' ? 'codex' : 'claude-code';
+  const timestamp = nowIso();
+  const existing = input.id
+    ? (db.prepare('SELECT * FROM upstream_model_rates WHERE id = ? AND channel_group_id = ?').get(input.id, groupId) as any)
+    : (db
+        .prepare('SELECT * FROM upstream_model_rates WHERE channel_group_id = @groupId AND agent_type = @agentType AND model = @model')
+        .get({ groupId, agentType, model }) as any);
+  const current = existing ? (mapUpstreamModelRate(existing) as UpstreamModelRate) : null;
+  const id = current?.id || input.id?.trim() || makeId();
+  const next = {
+    id,
+    groupId,
+    agentType,
+    model,
+    inputRatePerMillion: normalizeModelRateInput(input.inputRatePerMillion, current?.inputRatePerMillion ?? 0),
+    outputRatePerMillion: normalizeModelRateInput(input.outputRatePerMillion, current?.outputRatePerMillion ?? 0),
+    cacheCreationRatePerMillion: normalizeModelRateInput(
+      input.cacheCreationRatePerMillion,
+      current?.cacheCreationRatePerMillion ?? 0
+    ),
+    cacheReadRatePerMillion: normalizeModelRateInput(input.cacheReadRatePerMillion, current?.cacheReadRatePerMillion ?? 0),
+    isDefault: Boolean(input.isDefault),
+    sortOrder: Number.isFinite(Number(input.sortOrder)) ? Number(input.sortOrder) : current?.sortOrder ?? 100,
+    createdAt: current?.createdAt ?? timestamp,
+    updatedAt: timestamp
+  };
+
+  db.prepare(
+    `
+    INSERT INTO upstream_model_rates (
+      id,
+      channel_group_id,
+      agent_type,
+      model,
+      input_rate_per_million,
+      output_rate_per_million,
+      cache_creation_rate_per_million,
+      cache_read_rate_per_million,
+      is_default,
+      sort_order,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      @id,
+      @groupId,
+      @agentType,
+      @model,
+      @inputRatePerMillion,
+      @outputRatePerMillion,
+      @cacheCreationRatePerMillion,
+      @cacheReadRatePerMillion,
+      @isDefault,
+      @sortOrder,
+      @createdAt,
+      @updatedAt
+    )
+    ON CONFLICT(channel_group_id, agent_type, model) DO UPDATE SET
+      input_rate_per_million = excluded.input_rate_per_million,
+      output_rate_per_million = excluded.output_rate_per_million,
+      cache_creation_rate_per_million = excluded.cache_creation_rate_per_million,
+      cache_read_rate_per_million = excluded.cache_read_rate_per_million,
+      is_default = excluded.is_default,
+      sort_order = excluded.sort_order,
+      updated_at = excluded.updated_at
+  `
+  ).run({
+    ...next,
+    isDefault: next.isDefault ? 1 : 0
+  });
+
+  return getUpstreamChannel(groupId)!;
+}
+
+export function deleteUpstreamModelRate(groupId: string, rateId: string) {
+  const row = db.prepare('SELECT * FROM upstream_model_rates WHERE id = ? AND channel_group_id = ?').get(rateId, groupId) as any;
+  if (!row) return null;
+  const rate = mapUpstreamModelRate(row) as UpstreamModelRate;
+  db.prepare('DELETE FROM upstream_model_rates WHERE id = ? AND channel_group_id = ?').run(rateId, groupId);
+  return rate;
+}
+
+function modelMatches(pattern: string, model: string) {
+  if (pattern === '*') return true;
+  const normalizedPattern = pattern.toLowerCase();
+  const normalizedModel = model.toLowerCase();
+  if (normalizedPattern.endsWith('*')) {
+    return normalizedModel.startsWith(normalizedPattern.slice(0, -1));
+  }
+  return normalizedPattern === normalizedModel;
+}
+
+export function resolveUpstreamRates(input: { groupId: string; agent: AgentType; model?: string | null }): UsageRates {
+  const model = (input.model || '').trim();
+  const rates = modelRatesForGroup(input.groupId).filter((rate) => rate.agentType === input.agent);
+  const exact = model ? rates.find((rate) => !rate.model.endsWith('*') && modelMatches(rate.model, model)) : undefined;
+  const wildcard = model
+    ? rates
+        .filter((rate) => rate.model.endsWith('*') && rate.model !== '*')
+        .sort((a, b) => b.model.length - a.model.length || a.sortOrder - b.sortOrder)
+        .find((rate) => modelMatches(rate.model, model))
+    : undefined;
+  const defaultRate = rates.find((rate) => rate.isDefault) || rates.find((rate) => rate.model === '*');
+  const matched = exact || wildcard || defaultRate;
+  if (matched) {
+    return {
+      inputPerMillion: matched.inputRatePerMillion,
+      outputPerMillion: matched.outputRatePerMillion,
+      cacheCreationPerMillion: matched.cacheCreationRatePerMillion,
+      cacheReadPerMillion: matched.cacheReadRatePerMillion
+    };
+  }
+
+  const group = getUpstreamChannel(input.groupId);
+  return {
+    inputPerMillion: group?.inputRatePerMillion ?? 3,
+    outputPerMillion: group?.outputRatePerMillion ?? 15,
+    cacheCreationPerMillion: group?.cacheCreationRatePerMillion ?? 3.75,
+    cacheReadPerMillion: group?.cacheReadRatePerMillion ?? 0.3
+  };
+}
+
+function keyPoolAgent(group: UpstreamChannelGroup, agent: AgentType): UpstreamKeyAgentType {
+  return group.useIndependentAgentKeys ? agent : 'shared';
+}
+
+export function listUpstreamSelections(agent: AgentType): UpstreamSelection[] {
+  clearExpiredUpstreamDegradations();
+  const groups = (db
+    .prepare(
+      `
+      SELECT *
+      FROM upstream_channel_groups
+      WHERE status = 'active'
+      ORDER BY
+        CASE WHEN degraded_until IS NOT NULL THEN 1 ELSE 0 END ASC,
+        sort_order ASC,
+        created_at ASC
+    `
+    )
+    .all() as any[]).map((row) => mapUpstreamChannel(row) as UpstreamChannelGroup);
+
+  const selections: UpstreamSelection[] = [];
+  for (const group of groups) {
+    const apiUrl = agent === 'codex' ? group.codexApiUrl : group.claudeApiUrl;
+    if (!apiUrl) continue;
+
+    const keyAgent = keyPoolAgent(group, agent);
+    const keys = (db
+      .prepare(
+        `
+        SELECT *
+        FROM upstream_channel_keys
+        WHERE channel_group_id = @groupId
+          AND agent_type = @agentType
+          AND status = 'active'
+          AND (expires_at IS NULL OR expires_at > @now)
+        ORDER BY
+          CASE WHEN exhausted_until IS NOT NULL THEN 1 ELSE 0 END ASC,
+          sort_order ASC,
+          created_at ASC
+      `
+      )
+      .all({ groupId: group.id, agentType: keyAgent, now: nowIso() }) as any[]).map((row) => mapUpstreamChannelKey(row) as UpstreamChannelKey);
+
+    for (const key of keys) {
+      const rawKey = decryptKey(key.keyCiphertext);
+      if (!rawKey) continue;
+      selections.push({
+        group,
+        key,
+        rawKey,
+        agent,
+        apiUrl
+      });
+    }
+  }
+
+  return selections;
+}
+
+export function markUpstreamKeyFailure(input: {
+  keyId: string;
+  statusCode: number;
+  reason: string;
+  until?: string | null;
+}) {
+  const fallbackUntil = new Date(Date.now() + upstreamKeyDegradeMs).toISOString();
+  const until = input.until && Number.isFinite(Date.parse(input.until)) ? input.until : fallbackUntil;
+  db.prepare(
+    `
+    UPDATE upstream_channel_keys
+    SET exhausted_until = @until,
+        failure_reason = @reason,
+        failure_status_code = @statusCode,
+        updated_at = @updatedAt
+    WHERE id = @keyId
+  `
+  ).run({
+    keyId: input.keyId,
+    until,
+    reason: input.reason.slice(0, 500),
+    statusCode: input.statusCode,
+    updatedAt: nowIso()
+  });
+}
+
+export function markUpstreamGroupFailure(input: {
+  groupId: string;
+  statusCode: number;
+  reason: string;
+  until?: string | null;
+}) {
+  const row = db.prepare('SELECT server_error_recovery_minutes FROM upstream_channel_groups WHERE id = ?').get(input.groupId) as
+    | { server_error_recovery_minutes: number }
+    | undefined;
+  const minutes = recoveryMinutes(row?.server_error_recovery_minutes, 10);
+  const fallbackUntil = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+  const until = input.until && Number.isFinite(Date.parse(input.until)) ? input.until : fallbackUntil;
+  db.prepare(
+    `
+    UPDATE upstream_channel_groups
+    SET degraded_until = @until,
+        degraded_reason = @reason,
+        degraded_status_code = @statusCode,
+        updated_at = @updatedAt
+    WHERE id = @groupId
+  `
+  ).run({
+    groupId: input.groupId,
+    until,
+    reason: input.reason.slice(0, 500),
+    statusCode: input.statusCode,
+    updatedAt: nowIso()
+  });
+}
+
+export function touchUpstreamKey(id: string) {
+  db.prepare('UPDATE upstream_channel_keys SET last_used_at = ?, updated_at = ? WHERE id = ?').run(nowIso(), nowIso(), id);
+}
+
 export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
   const keyOwner = db.prepare('SELECT user_id FROM api_keys WHERE id = ?').get(apiKeyId) as { user_id: string | null } | undefined;
+  let balanceCents = 0;
   if (keyOwner?.user_id) {
-    ensureAccountState(keyOwner.user_id);
+    balanceCents = ensureAccountState(keyOwner.user_id).freeCreditCents;
   }
 
   const key = db
@@ -1381,6 +3341,8 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
       weeklyLimit: 0,
       remainingFiveHour: 0,
       remainingWeekly: 0,
+      balanceCents,
+      quotaSource: balanceCents > 0 ? 'balance' : 'none',
       fiveHourResetAt: resetAt,
       weeklyResetAt: resetAt
     };
@@ -1396,6 +3358,7 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
       SELECT COALESCE(SUM(total_cost_cents), 0) as used
       FROM usage_logs
       WHERE api_key_id = ? AND created_at >= ? AND status_code BETWEEN 200 AND 299
+        AND COALESCE(usage_source, 'plan') = 'plan'
     `
     )
     .get(apiKeyId, fiveHourSince) as { used: number };
@@ -1406,6 +3369,7 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
       SELECT COALESCE(SUM(total_cost_cents), 0) as used
       FROM usage_logs
       WHERE api_key_id = ? AND created_at >= ? AND status_code BETWEEN 200 AND 299
+        AND COALESCE(usage_source, 'plan') = 'plan'
     `
     )
     .get(apiKeyId, weeklySince) as { used: number };
@@ -1416,6 +3380,7 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
       SELECT MIN(created_at) as oldest
       FROM usage_logs
       WHERE api_key_id = ? AND created_at >= ? AND status_code BETWEEN 200 AND 299
+        AND COALESCE(usage_source, 'plan') = 'plan'
     `
     )
     .get(apiKeyId, fiveHourSince) as { oldest: string | null };
@@ -1426,6 +3391,7 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
       SELECT MIN(created_at) as oldest
       FROM usage_logs
       WHERE api_key_id = ? AND created_at >= ? AND status_code BETWEEN 200 AND 299
+        AND COALESCE(usage_source, 'plan') = 'plan'
     `
     )
     .get(apiKeyId, weeklySince) as { oldest: string | null };
@@ -1439,13 +3405,20 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
     ? new Date(new Date(oldestWeekly.oldest).getTime() + sevenDaysMs).toISOString()
     : new Date(now + sevenDaysMs).toISOString();
 
+  const remainingFiveHour = Math.max(0, key.five_hour_token_limit - fiveHourUsed);
+  const remainingWeekly = Math.max(0, key.weekly_token_limit - weeklyUsed);
+  const hasPlanQuota = remainingFiveHour > 0 && remainingWeekly > 0;
+  const quotaSource = hasPlanQuota ? 'plan' : balanceCents > 0 ? 'balance' : 'none';
+
   return {
     fiveHourUsed,
     fiveHourLimit: key.five_hour_token_limit,
     weeklyUsed,
     weeklyLimit: key.weekly_token_limit,
-    remainingFiveHour: Math.max(0, key.five_hour_token_limit - fiveHourUsed),
-    remainingWeekly: Math.max(0, key.weekly_token_limit - weeklyUsed),
+    remainingFiveHour,
+    remainingWeekly,
+    balanceCents,
+    quotaSource,
     fiveHourResetAt,
     weeklyResetAt
   };
@@ -1455,30 +3428,46 @@ export function getAccountState(userId: string) {
   return ensureAccountState(userId);
 }
 
+function formatQuotaResetAt(value: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate())
+  ].join('-') + ` ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function combinedQuotaResetAt(quota: QuotaSnapshot) {
+  const fiveHourTime = Date.parse(quota.fiveHourResetAt);
+  const weeklyTime = Date.parse(quota.weeklyResetAt);
+  const resetAt = Math.max(
+    Number.isFinite(fiveHourTime) ? fiveHourTime : 0,
+    Number.isFinite(weeklyTime) ? weeklyTime : 0
+  );
+  return resetAt > 0 ? new Date(resetAt).toISOString() : quota.weeklyResetAt || quota.fiveHourResetAt;
+}
+
 export function assertQuota(key: KeyWithPlan) {
   const quota = getQuotaSnapshot(key.id);
-  if (quota.remainingFiveHour <= 0) {
-    return {
-      ok: false as const,
-      statusCode: 429,
-      message: 'Five-hour rolling cost limit exceeded',
-      quota
-    };
+  const hasPlanQuota = quota.remainingFiveHour > 0 && quota.remainingWeekly > 0;
+  if (hasPlanQuota || quota.balanceCents > 0) {
+    return { ok: true as const, quota };
   }
 
-  if (quota.remainingWeekly <= 0) {
-    return {
-      ok: false as const,
-      statusCode: 429,
-      message: 'Weekly rolling cost limit exceeded',
-      quota
-    };
-  }
+  const resetAt = combinedQuotaResetAt(quota);
 
-  return { ok: true as const, quota };
+  return {
+    ok: false as const,
+    statusCode: 402,
+    message: `额度使用已达上限，恢复时间：${formatQuotaResetAt(resetAt)}`,
+    quota
+  };
 }
 
 type UsageLogDefaults =
+  | 'usageSource'
   | 'cacheCreationInputTokens'
   | 'cacheReadInputTokens'
   | 'inputCostCents'
@@ -1491,10 +3480,11 @@ export function createUsageLog(
   input: Omit<UsageLog, 'id' | 'createdAt' | UsageLogDefaults> &
     Partial<Pick<UsageLog, UsageLogDefaults>> & { createdAt?: string }
 ) {
-  const id = makeId();
+	  const id = makeId();
   const log = {
+    usageSource: 'plan',
     cacheCreationInputTokens: 0,
-    cacheReadInputTokens: 0,
+	    cacheReadInputTokens: 0,
     inputCostCents: 0,
     outputCostCents: 0,
     cacheCreationCostCents: 0,
@@ -1508,9 +3498,10 @@ export function createUsageLog(
   db.prepare(
     `
     INSERT INTO usage_logs (
-      id,
-      api_key_id,
-      model,
+	      id,
+	      api_key_id,
+	      usage_source,
+	      model,
       path,
       method,
       status_code,
@@ -1530,9 +3521,10 @@ export function createUsageLog(
       created_at
     )
     VALUES (
-      @id,
-      @apiKeyId,
-      @model,
+	      @id,
+	      @apiKeyId,
+	      @usageSource,
+	      @model,
       @path,
       @method,
       @statusCode,
@@ -1551,8 +3543,29 @@ export function createUsageLog(
       @requestId,
       @createdAt
     )
-  `
-  ).run(log);
+	  `
+	  ).run(log);
+
+  if (
+    log.apiKeyId &&
+    log.usageSource === 'balance' &&
+    log.statusCode >= 200 &&
+    log.statusCode <= 299 &&
+    log.totalCostCents > 0
+  ) {
+    db.prepare(
+      `
+      UPDATE account_state
+      SET free_credit_cents = MAX(0, free_credit_cents - @costCents),
+          updated_at = @updatedAt
+      WHERE id = (SELECT user_id FROM api_keys WHERE id = @apiKeyId)
+    `
+    ).run({
+      apiKeyId: log.apiKeyId,
+      costCents: log.totalCostCents,
+      updatedAt: nowIso()
+    });
+  }
 
   pruneUsageLogs();
   return id;
@@ -1647,10 +3660,10 @@ export function usageSummaryForUser(userId: string) {
     .prepare(
       `
       SELECT
-        COALESCE(SUM(CASE WHEN created_at >= @fiveHourSince AND status_code BETWEEN 200 AND 299${userClause} THEN total_tokens ELSE 0 END), 0) as five_hour_tokens,
-        COALESCE(SUM(CASE WHEN created_at >= @weeklySince AND status_code BETWEEN 200 AND 299${userClause} THEN total_tokens ELSE 0 END), 0) as weekly_tokens,
-        COALESCE(SUM(CASE WHEN created_at >= @fiveHourSince AND status_code BETWEEN 200 AND 299${userClause} THEN total_cost_cents ELSE 0 END), 0) as five_hour_cost_cents,
-        COALESCE(SUM(CASE WHEN created_at >= @weeklySince AND status_code BETWEEN 200 AND 299${userClause} THEN total_cost_cents ELSE 0 END), 0) as weekly_cost_cents,
+        COALESCE(SUM(CASE WHEN created_at >= @fiveHourSince AND status_code BETWEEN 200 AND 299 AND COALESCE(usage_source, 'plan') = 'plan'${userClause} THEN total_tokens ELSE 0 END), 0) as five_hour_tokens,
+        COALESCE(SUM(CASE WHEN created_at >= @weeklySince AND status_code BETWEEN 200 AND 299 AND COALESCE(usage_source, 'plan') = 'plan'${userClause} THEN total_tokens ELSE 0 END), 0) as weekly_tokens,
+        COALESCE(SUM(CASE WHEN created_at >= @fiveHourSince AND status_code BETWEEN 200 AND 299 AND COALESCE(usage_source, 'plan') = 'plan'${userClause} THEN total_cost_cents ELSE 0 END), 0) as five_hour_cost_cents,
+        COALESCE(SUM(CASE WHEN created_at >= @weeklySince AND status_code BETWEEN 200 AND 299 AND COALESCE(usage_source, 'plan') = 'plan'${userClause} THEN total_cost_cents ELSE 0 END), 0) as weekly_cost_cents,
         COALESCE(SUM(CASE WHEN status_code >= 400${userClause} THEN 1 ELSE 0 END), 0) as errors
       FROM usage_logs
     `
