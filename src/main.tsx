@@ -28,6 +28,7 @@ import {
   RefreshCcw,
   ShieldCheck,
   ShoppingBag,
+  Download,
   Sun,
   UserRound,
   Play,
@@ -36,6 +37,9 @@ import {
   X
 } from 'lucide-react';
 import './styles.css';
+
+const officialQqGroupQrSrc = '/relayhub-qq-group-2.jpg';
+const officialQqGroupNumber = '1050784021';
 
 type Language = 'zh-CN' | 'zh-TW' | 'en';
 type AuthMode = 'login' | 'register';
@@ -386,7 +390,7 @@ const dictionary = {
     upgradeTitleBefore: '选择最适合您',
     upgradeTitleAccent: '工作量的方案',
     upgradeUnitBadge: '单价',
-    upgradeUnitLine: '低至 ¥0.1 人民币 = $1 美元 API · 充值 ¥10 即可最多获取 $100 美金额度的 API。',
+    upgradeUnitLine: '低至 ¥1 人民币 = $5 美元 API · 充值 ¥10 即可最多获取 $50 美金额度的 API。',
     recommendedUpgrade: 'RECOMMENDED UPGRADE',
     switchToPlan: '切换到 {plan}',
     rateLimitQuota: '限流额度',
@@ -397,6 +401,10 @@ const dictionary = {
     purchaseChannelTitle: '选择购买渠道',
     purchaseChannelDescription: '选择购买渠道和套餐后，点击去购买打开对应商品链接。',
     rechargeChannelDescription: '选择购买渠道和额度后，点击去购买打开对应商品链接。',
+    purchaseSuspendedTitle: '购买渠道暂停通知',
+    purchaseSuspendedDescription: '由于淘宝和闲鱼禁止上架 GPT 和 Claude Code 商品，现已暂停该购买渠道，请加入官方 QQ 交流群找群主进行购买。',
+    officialQQGroup: '官方 QQ 交流群',
+    officialQQGroupNumber: '群号',
     purchaseProductTitle: '选择商品',
     purchasePlanTitle: '套餐',
     purchaseCreditTitle: '额度',
@@ -629,7 +637,7 @@ const dictionary = {
     upgradeTitleBefore: '選擇最適合您',
     upgradeTitleAccent: '工作量的方案',
     upgradeUnitBadge: '單價',
-    upgradeUnitLine: '低至 ¥0.1 人民幣 = $1 美元 API · 儲值 ¥10 即可最多取得 $100 美金額度的 API。',
+    upgradeUnitLine: '低至 ¥1 人民幣 = $5 美元 API · 儲值 ¥10 即可最多取得 $50 美金額度的 API。',
     recommendedUpgrade: 'RECOMMENDED UPGRADE',
     switchToPlan: '切換到 {plan}',
     rateLimitQuota: '限流額度',
@@ -640,6 +648,10 @@ const dictionary = {
     purchaseChannelTitle: '選擇購買渠道',
     purchaseChannelDescription: '選擇購買渠道和套餐後，點擊去購買開啟對應商品連結。',
     rechargeChannelDescription: '選擇購買渠道和額度後，點擊去購買開啟對應商品連結。',
+    purchaseSuspendedTitle: '購買渠道暫停通知',
+    purchaseSuspendedDescription: '由於淘寶和閒魚禁止上架 GPT 和 Claude Code 商品，現已暫停該購買渠道，請加入官方 QQ 交流群找群主進行購買。',
+    officialQQGroup: '官方 QQ 交流群',
+    officialQQGroupNumber: '群號',
     purchaseProductTitle: '選擇商品',
     purchasePlanTitle: '套餐',
     purchaseCreditTitle: '額度',
@@ -872,7 +884,7 @@ const dictionary = {
     upgradeTitleBefore: 'Choose the plan that fits',
     upgradeTitleAccent: 'your workload',
     upgradeUnitBadge: 'Unit price',
-    upgradeUnitLine: 'As low as RMB ¥0.1 = $1 USD API credit · Recharge ¥10 to get up to $100 API credit.',
+    upgradeUnitLine: 'As low as RMB ¥1 = $5 USD API credit · Recharge ¥10 to get up to $50 API credit.',
     recommendedUpgrade: 'RECOMMENDED UPGRADE',
     switchToPlan: 'Switch to {plan}',
     rateLimitQuota: 'Rate limits',
@@ -883,6 +895,10 @@ const dictionary = {
     purchaseChannelTitle: 'Choose purchase channel',
     purchaseChannelDescription: 'Choose a channel and plan, then click Buy to open the matching product link.',
     rechargeChannelDescription: 'Choose a channel and credit amount, then click Buy to open the matching product link.',
+    purchaseSuspendedTitle: 'Purchase channel suspended',
+    purchaseSuspendedDescription: 'Because Taobao and Xianyu prohibit listing GPT and Claude Code products, this purchase channel is currently suspended. Please join the official QQ group and contact the group owner to make a purchase.',
+    officialQQGroup: 'Official QQ group',
+    officialQQGroupNumber: 'Group number',
     purchaseProductTitle: 'Choose product',
     purchasePlanTitle: 'Plan',
     purchaseCreditTitle: 'Credit',
@@ -1743,6 +1759,7 @@ function App() {
   const [data, setData] = React.useState<Bootstrap>(defaultBootstrap);
   const [loading, setLoading] = React.useState(true);
   const [isNavDrawerOpen, setIsNavDrawerOpen] = React.useState(false);
+  const [refreshTick, setRefreshTick] = React.useState(0);
   const t = dictionary[language];
 
   const headers = React.useMemo(() => {
@@ -1781,7 +1798,7 @@ function App() {
 
   React.useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, refreshTick]);
 
   React.useEffect(() => {
     writeHistoryRoute(activeTab, planView, true);
@@ -1844,6 +1861,11 @@ function App() {
     setThemeMode(nextThemeMode);
     document.documentElement.dataset.themeMode = resolveThemeMode(nextThemeMode);
   }
+
+  const handleRefresh = React.useCallback(async () => {
+    await load();
+    setRefreshTick((value) => value + 1);
+  }, [load]);
 
   function logout() {
     localStorage.removeItem('authToken');
@@ -1990,7 +2012,7 @@ function App() {
               setAccentTheme={setAccentTheme}
               t={t}
             />
-            <button type="button" className="icon-button" onClick={() => void load()} title={t.refresh}>
+            <button type="button" className="icon-button" onClick={() => void handleRefresh()} title={t.refresh}>
               <RefreshCcw size={17} />
             </button>
             <AccountMenu user={data.user} t={t} onLogout={logout} />
@@ -2013,15 +2035,15 @@ function App() {
             setView={changePlanView}
           />
         ) : null}
-        {activeTab === 'orders' ? <OrdersPanel headers={headers} t={t} /> : null}
-        {activeTab === 'logs' ? <LogsPanel keys={data.keys} headers={headers} t={t} /> : null}
+        {activeTab === 'orders' ? <OrdersPanel headers={headers} refreshTick={refreshTick} t={t} /> : null}
+        {activeTab === 'logs' ? <LogsPanel keys={data.keys} headers={headers} refreshTick={refreshTick} t={t} /> : null}
         {activeTab === 'gift-cards' && data.user.role === 'admin' ? (
-          <GiftCardsPanel headers={headers} plans={data.plans} t={t} />
+          <GiftCardsPanel headers={headers} plans={data.plans} refreshTick={refreshTick} t={t} />
         ) : null}
         {activeTab === 'products' && data.user.role === 'admin' ? (
-          <ProductLinksPanel headers={headers} initialProductLinks={data.productLinks} t={t} />
+          <ProductLinksPanel headers={headers} initialProductLinks={data.productLinks} refreshTick={refreshTick} t={t} />
         ) : null}
-        {activeTab === 'channels' && data.user.role === 'admin' ? <ChannelsPanel headers={headers} t={t} /> : null}
+        {activeTab === 'channels' && data.user.role === 'admin' ? <ChannelsPanel headers={headers} refreshTick={refreshTick} t={t} /> : null}
         {activeTab === 'guide' ? <GuidePage t={t} /> : null}
       </main>
     </div>
@@ -2414,7 +2436,7 @@ function AccountMenu({
   );
 }
 
-function OrdersPanel({ headers, t }: { headers: HeadersInit; t: Record<string, string> }) {
+function OrdersPanel({ headers, refreshTick, t }: { headers: HeadersInit; refreshTick: number; t: Record<string, string> }) {
   const [orderId, setOrderId] = React.useState('');
   const [claimResult, setClaimResult] = React.useState<ClaimedOrder[]>([]);
   const [claimedOrders, setClaimedOrders] = React.useState<ClaimedOrder[]>([]);
@@ -2441,7 +2463,7 @@ function OrdersPanel({ headers, t }: { headers: HeadersInit; t: Record<string, s
 
   React.useEffect(() => {
     void loadClaimHistory();
-  }, [loadClaimHistory]);
+  }, [loadClaimHistory, refreshTick]);
 
   async function claim(event: React.FormEvent) {
     event.preventDefault();
@@ -3707,7 +3729,7 @@ function Meter({ label, value, used, limit }: { label: string; value: number; us
 
 type GiftCardFormType = 'plan' | 'credit';
 
-function GiftCardsPanel({ headers, plans, t }: { headers: HeadersInit; plans: Plan[]; t: Record<string, string> }) {
+function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersInit; plans: Plan[]; refreshTick: number; t: Record<string, string> }) {
   const eligiblePlans = React.useMemo(() => giftPlanProductOptions(plans), [plans]);
   const defaultPlanId = eligiblePlans[0]?.itemId || '';
   const [giftCardPage, setGiftCardPage] = React.useState<GiftCardPage>({
@@ -3768,7 +3790,7 @@ function GiftCardsPanel({ headers, plans, t }: { headers: HeadersInit; plans: Pl
 
   React.useEffect(() => {
     void loadGiftCards();
-  }, [loadGiftCards]);
+  }, [loadGiftCards, refreshTick]);
 
   function openCreate(nextType: GiftCardFormType = formType) {
     setFormType(nextType);
@@ -3942,7 +3964,7 @@ function GiftCardsPanel({ headers, plans, t }: { headers: HeadersInit; plans: Pl
           </div>
         ) : null}
       </section>
-      <TaobaoAutomationPanel headers={headers} plans={eligiblePlans} t={t} />
+      <TaobaoAutomationPanel headers={headers} plans={eligiblePlans} refreshTick={refreshTick} t={t} />
 
       {isCreateOpen ? (
         <div className="modal-backdrop" role="presentation">
@@ -4161,7 +4183,7 @@ function GiftCardRows({
   );
 }
 
-function TaobaoAutomationPanel({ headers, plans, t }: { headers: HeadersInit; plans: PlanProductOption[]; t: Record<string, string> }) {
+function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: HeadersInit; plans: PlanProductOption[]; refreshTick: number; t: Record<string, string> }) {
   const [shops, setShops] = React.useState<TaobaoShop[]>([]);
   const [mappings, setMappings] = React.useState<TaobaoProductMapping[]>([]);
   const [orders, setOrders] = React.useState<PlatformOrder[]>([]);
@@ -4172,6 +4194,7 @@ function TaobaoAutomationPanel({ headers, plans, t }: { headers: HeadersInit; pl
   const [sessionKey, setSessionKey] = React.useState('');
   const [sessionExpiresAt, setSessionExpiresAt] = React.useState('');
   const [permitShopId, setPermitShopId] = React.useState('');
+  const [authorizingTaobao, setAuthorizingTaobao] = React.useState(false);
   const taobaoProducts = React.useMemo<PurchaseProductOption[]>(() => [...plans, ...creditProductOptions()], [plans]);
   const [selectedProductKey, setSelectedProductKey] = React.useState(() => {
     const first = plans[0] || creditProductOptions()[0];
@@ -4256,6 +4279,24 @@ function TaobaoAutomationPanel({ headers, plans, t }: { headers: HeadersInit; pl
     void load();
   }, [load]);
 
+  React.useEffect(() => {
+    function handleTaobaoOauthMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return;
+      const payload = event.data;
+      if (!payload || typeof payload !== 'object' || payload.type !== 'taobao-oauth-complete') return;
+      setAuthorizingTaobao(false);
+      if (payload.ok) {
+        showSuccessToast(typeof payload.title === 'string' ? payload.title : '淘宝店铺授权已保存。');
+        void load();
+        return;
+      }
+      showErrorToast(typeof payload.detail === 'string' ? payload.detail : '淘宝授权失败。');
+    }
+
+    window.addEventListener('message', handleTaobaoOauthMessage);
+    return () => window.removeEventListener('message', handleTaobaoOauthMessage);
+  }, [load]);
+
   async function saveShop(event: React.FormEvent) {
     event.preventDefault();
     try {
@@ -4283,6 +4324,26 @@ function TaobaoAutomationPanel({ headers, plans, t }: { headers: HeadersInit; pl
       setSessionExpiresAt('');
       showSuccessToast(tr(t, 'taobaoShopSaved', '淘宝店铺授权已保存。'));
     } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    }
+  }
+
+  async function startTaobaoOauth() {
+    try {
+      setAuthorizingTaobao(true);
+      const response = await fetch('/api/taobao/oauth/start', { headers });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        setAuthorizingTaobao(false);
+        return;
+      }
+      const authorizeUrl = (payload as { authorizeUrl?: string }).authorizeUrl;
+      if (!authorizeUrl) throw new Error('获取淘宝授权链接失败。');
+      const popup = window.open(authorizeUrl, 'taobao-oauth', 'width=720,height=760');
+      if (!popup) throw new Error('浏览器拦截了授权窗口，请允许弹窗后重试。');
+    } catch (error) {
+      setAuthorizingTaobao(false);
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
     }
   }
@@ -4393,6 +4454,16 @@ function TaobaoAutomationPanel({ headers, plans, t }: { headers: HeadersInit; pl
           {loading ? <div className="loading-line" /> : null}
           <div className="taobao-split-grid">
             <form className="taobao-mapping-form taobao-shop-form" onSubmit={saveShop}>
+              <div className="taobao-permit-panel taobao-oauth-panel">
+                <div>
+                  <h3>授权淘宝店铺</h3>
+                  <p>推荐直接跳转淘宝授权，系统会自动写入 SessionKey 和过期时间。</p>
+                </div>
+                <button type="button" className="secondary-button taobao-oauth-button" onClick={() => void startTaobaoOauth()} disabled={authorizingTaobao}>
+                  <KeyRound size={16} />
+                  {authorizingTaobao ? '等待淘宝授权…' : '点击授权淘宝店铺'}
+                </button>
+              </div>
               <label>
                 店铺 ID
                 <input value={shopId} onChange={(event) => setShopId(event.target.value)} required />
@@ -4578,10 +4649,12 @@ function TaobaoAutomationPanel({ headers, plans, t }: { headers: HeadersInit; pl
 function ProductLinksPanel({
   headers,
   initialProductLinks,
+  refreshTick,
   t
 }: {
   headers: HeadersInit;
   initialProductLinks: ProductLink[];
+  refreshTick: number;
   t: Record<string, string>;
 }) {
   const productRows = React.useMemo(() => [...planProductOptions(), ...creditProductOptions()], []);
@@ -4615,7 +4688,7 @@ function ProductLinksPanel({
 
   React.useEffect(() => {
     void loadProductLinks();
-  }, [loadProductLinks]);
+  }, [loadProductLinks, refreshTick]);
 
   function updateUrl(option: PurchaseProductOption, channel: PurchaseChannelId, value: string) {
     setFormLinks((current) => ({
@@ -4822,7 +4895,7 @@ function modelRateToForm(rate: UpstreamModelRate) {
   };
 }
 
-function ChannelsPanel({ headers, t }: { headers: HeadersInit; t: Record<string, string> }) {
+function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refreshTick: number; t: Record<string, string> }) {
   const [channels, setChannels] = React.useState<UpstreamChannel[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [isChannelOpen, setIsChannelOpen] = React.useState(false);
@@ -4864,7 +4937,7 @@ function ChannelsPanel({ headers, t }: { headers: HeadersInit; t: Record<string,
 
   React.useEffect(() => {
     void loadChannels();
-  }, [loadChannels]);
+  }, [loadChannels, refreshTick]);
 
   function openCreate() {
     setChannelForm(emptyChannelForm);
@@ -5880,14 +5953,7 @@ function PlansPanel({
           t={t}
         />
         {purchaseTarget ? (
-          <PurchaseChannelModal
-            description={t.purchaseChannelDescription}
-            mode="plan"
-            initialItemId={purchaseTarget.id}
-            productLinks={data.productLinks}
-            onClose={() => setPurchaseTarget(null)}
-            t={t}
-          />
+          <PurchaseSuspendedModal onClose={() => setPurchaseTarget(null)} t={t} />
         ) : null}
       </>
     );
@@ -5975,13 +6041,7 @@ function PlansPanel({
         />
       ) : null}
       {isRechargeOpen ? (
-        <PurchaseChannelModal
-          description={t.rechargeChannelDescription}
-          mode="credit"
-          productLinks={data.productLinks}
-          onClose={() => setIsRechargeOpen(false)}
-          t={t}
-        />
+        <PurchaseSuspendedModal onClose={() => setIsRechargeOpen(false)} t={t} />
       ) : null}
     </section>
   );
@@ -6066,6 +6126,76 @@ function PlanChangePage({
       </div>
       <p className="upgrade-footnote">{t.planFootnote}</p>
     </section>
+  );
+}
+
+function PurchaseSuspendedModal({
+  onClose,
+  t
+}: {
+  onClose: () => void;
+  t: Record<string, string>;
+}) {
+  async function handleCopyGroupNumber() {
+    await copyTextToClipboard(officialQqGroupNumber);
+    showSuccessToast(`${tr(t, 'officialQQGroupNumber', '群号')}已复制`);
+  }
+
+  function handleDownloadQr() {
+    const link = document.createElement('a');
+    link.href = officialQqGroupQrSrc;
+    link.download = 'relayhub-qq-group-2.jpg';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <section
+        className="modal-panel purchase-suspended-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="purchase-suspended-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="section-heading">
+          <div>
+            <h2 id="purchase-suspended-title">{tr(t, 'purchaseSuspendedTitle', '购买渠道暂停通知')}</h2>
+            <p>{tr(t, 'purchaseSuspendedDescription', '由于淘宝和闲鱼禁止上架 GPT 和 Claude Code 商品，现已暂停该购买渠道，请加入官方 QQ 交流群找群主进行购买。')}</p>
+          </div>
+        </div>
+        <div className="purchase-suspended-content">
+          <div className="purchase-suspended-card purchase-suspended-notice">
+            <strong>{tr(t, 'officialQQGroup', '官方 QQ 交流群')}</strong>
+            <div className="purchase-suspended-group-row">
+              <span>{tr(t, 'officialQQGroupNumber', '群号')}：{officialQqGroupNumber}</span>
+              <button
+                type="button"
+                className="icon-button compact"
+                onClick={() => void handleCopyGroupNumber()}
+                title={t.copy}
+                aria-label={t.copy}
+              >
+                <Copy size={15} />
+              </button>
+            </div>
+          </div>
+          <div className="purchase-suspended-card purchase-suspended-qr-wrap">
+            <img className="purchase-suspended-qr" src={officialQqGroupQrSrc} alt={tr(t, 'officialQQGroup', '官方 QQ 交流群')} />
+            <button type="button" className="secondary-button purchase-suspended-download" onClick={handleDownloadQr}>
+              <Download size={16} />
+              下载二维码
+            </button>
+          </div>
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="primary-button" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -6235,7 +6365,7 @@ function GiftCardConfirmModal({
   );
 }
 
-function LogsPanel({ keys, headers, t }: { keys: ApiKey[]; headers: HeadersInit; t: Record<string, string> }) {
+function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers: HeadersInit; refreshTick: number; t: Record<string, string> }) {
   const [status, setStatus] = React.useState<LogStatus>('all');
   const [apiKeyId, setApiKeyId] = React.useState('all');
   const [range, setRange] = React.useState<LogRange>('24h');
@@ -6272,7 +6402,7 @@ function LogsPanel({ keys, headers, t }: { keys: ApiKey[]; headers: HeadersInit;
 
   React.useEffect(() => {
     void loadLogs();
-  }, [loadLogs]);
+  }, [loadLogs, refreshTick]);
 
   function updateStatus(value: LogStatus) {
     setStatus(value);
@@ -6487,11 +6617,8 @@ function percent(value: number) {
 
 function currency(cents: number, currencyCode: string) {
   void currencyCode;
-  const value = Intl.NumberFormat('en', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format((cents || 0) / 100);
-  return `$${value}`;
+  const amount = roundToDecimals((cents || 0) / 100, 2);
+  return `$${amount.toFixed(2)}`;
 }
 
 function currencyNoDecimals(cents: number, currencyCode: string) {
@@ -6501,12 +6628,24 @@ function currencyNoDecimals(cents: number, currencyCode: string) {
 }
 
 function dollarsToCents(value: number) {
-  return Math.max(1, Math.round((value || 0) * 100));
+  return Math.max(1, Math.ceil((value || 0) * 100));
+}
+
+function ceilToDecimals(value: number, digits: number) {
+  if (!Number.isFinite(value)) return 0;
+  const factor = 10 ** digits;
+  return Math.ceil((value + Number.EPSILON) * factor) / factor;
+}
+
+function roundToDecimals(value: number, digits: number) {
+  if (!Number.isFinite(value)) return 0;
+  const factor = 10 ** digits;
+  return Math.round((value + Number.EPSILON) * factor) / factor;
 }
 
 function tokenK(value: number) {
-  const amount = (value || 0) / 1000;
-  return `${Intl.NumberFormat('en', { maximumFractionDigits: amount >= 10 ? 1 : 2 }).format(amount)}k`;
+  const amount = ceilToDecimals((value || 0) / 1000, 3);
+  return `${amount.toFixed(3)}k`;
 }
 
 function usageColor(value: number) {
