@@ -1,0 +1,151 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: relayhub
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: relayhub-data
+  namespace: relayhub
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: relayhub
+  namespace: relayhub
+  labels:
+    app.kubernetes.io/name: relayhub
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: relayhub
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: relayhub
+    spec:
+      containers:
+        - name: relayhub
+          image: relayhub:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8787
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "8787"
+            - name: DATABASE_PATH
+              value: /app/data/transfer-station.sqlite
+            - name: PUBLIC_BASE_URL
+              value: https://relayhub.chrisley.site
+            - name: APP_BASE_URL
+              value: https://relayhub.chrisley.site
+            - name: ANTHROPIC_VERSION
+              value: "2023-06-01"
+            - name: ADMIN_EMAILS
+              valueFrom:
+                secretKeyRef:
+                  name: relayhub-env
+                  key: ADMIN_EMAILS
+            - name: ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: relayhub-env
+                  key: ADMIN_TOKEN
+            - name: KEY_ENCRYPTION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: relayhub-env
+                  key: KEY_ENCRYPTION_SECRET
+          envFrom:
+            - secretRef:
+                name: relayhub-env
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 8
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+        - name: taobao-worker
+          image: relayhub:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - ./node_modules/.bin/tsx
+          args:
+            - server/taobao-worker.ts
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: DATABASE_PATH
+              value: /app/data/transfer-station.sqlite
+          envFrom:
+            - secretRef:
+                name: relayhub-env
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: relayhub-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: relayhub
+  namespace: relayhub
+  labels:
+    app.kubernetes.io/name: relayhub
+spec:
+  selector:
+    app.kubernetes.io/name: relayhub
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: relayhub
+  namespace: relayhub
+  annotations:
+    traefik.ingress.kubernetes.io/router.priority: "100"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: relayhub.chrisley.site
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: relayhub
+                port:
+                  name: http
+  tls:
+    - hosts:
+        - relayhub.chrisley.site
+      secretName: chrisley-origin-tls
