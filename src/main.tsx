@@ -3,41 +3,57 @@ import { createRoot } from 'react-dom/client';
 import {
   Activity,
   ArrowLeft,
+  Ban,
   BarChart3,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   CreditCard,
   DollarSign,
   Eye,
   EyeOff,
   Gauge,
+  Gift,
   Globe2,
   KeyRound,
   LayoutDashboard,
   LogOut,
+  Menu,
   Monitor,
   Moon,
   Palette,
   Plus,
   RefreshCcw,
   ShieldCheck,
+  ShoppingBag,
   Sun,
   UserRound,
   Play,
-  Trash2
+  Route,
+  Trash2,
+  X
 } from 'lucide-react';
 import './styles.css';
 
 type Language = 'zh-CN' | 'zh-TW' | 'en';
 type AuthMode = 'login' | 'register';
-type Tab = 'dashboard' | 'keys' | 'usage' | 'plans' | 'logs' | 'guide';
+type Tab = 'dashboard' | 'keys' | 'usage' | 'plans' | 'orders' | 'logs' | 'gift-cards' | 'products' | 'channels' | 'guide';
 type PlanView = 'billing' | 'change';
 type PurchaseChannelId = 'taobao' | 'xianyu';
+type ProductItemType = 'plan' | 'credit';
 type GuideAgentId = 'claude-code' | 'codex';
+type UpstreamKeyAgentType = 'shared' | GuideAgentId;
 type GuideOsId = 'windows' | 'macos' | 'linux' | 'macos-linux';
 type ThemeMode = 'system' | 'light' | 'dark';
 type AccentTheme = 'sun-gold' | 'rose-pink' | 'pine-green' | 'violet' | 'bay-blue';
+
+type NavMenuItem = {
+  id: Tab;
+  label: string;
+  icon: React.ElementType<{ size?: number }>;
+};
 
 type Plan = {
   id: string;
@@ -48,6 +64,15 @@ type Plan = {
   priceCents: number;
   currency: string;
   isActive: number;
+};
+
+type ProductLink = {
+  itemType: ProductItemType;
+  itemId: string;
+  channel: PurchaseChannelId;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type UserProfile = {
@@ -74,6 +99,8 @@ type QuotaSnapshot = {
   weeklyLimit: number;
   remainingFiveHour: number;
   remainingWeekly: number;
+  balanceCents: number;
+  quotaSource: 'plan' | 'balance' | 'none';
   fiveHourResetAt: string;
   weeklyResetAt: string;
 };
@@ -105,6 +132,7 @@ type KeySecret = {
 type UsageLog = {
   id: string;
   apiKeyId: string | null;
+  usageSource: 'plan' | 'balance' | 'none';
   model: string;
   path: string;
   method: string;
@@ -157,6 +185,7 @@ type Bootstrap = {
   account: AccountState;
   summary: Summary;
   plans: Plan[];
+  productLinks: ProductLink[];
   keys: ApiKey[];
 };
 
@@ -186,6 +215,73 @@ type LogPage = {
   pageSize: number;
 };
 
+type ClaimedOrder = {
+  orderId: string;
+  subOrderId: string;
+  platform: PurchaseChannelId;
+  title: string;
+  giftCardCode: string | null;
+  deliveryStatus: 'pending' | 'ready' | 'claimed' | 'skipped' | 'failed';
+  claimedAt: string | null;
+  updatedAt: string;
+};
+
+type UpstreamChannelKey = {
+  id: string;
+  channelGroupId: string;
+  name: string;
+  agentType: UpstreamKeyAgentType;
+  keyPreview: string;
+  status: 'active' | 'paused' | 'revoked';
+  sortOrder: number;
+  expiresAt: string | null;
+  exhaustedUntil: string | null;
+  failureReason: string | null;
+  failureStatusCode: number | null;
+  lastUsedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type UpstreamModelRate = {
+  id: string;
+  channelGroupId: string;
+  agentType: GuideAgentId;
+  model: string;
+  inputRatePerMillion: number;
+  outputRatePerMillion: number;
+  cacheCreationRatePerMillion: number;
+  cacheReadRatePerMillion: number;
+  isDefault: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type UpstreamChannel = {
+  id: string;
+  name: string;
+  status: 'active' | 'paused';
+  claudeApiUrl: string;
+  codexApiUrl: string;
+  useIndependentAgentKeys: boolean;
+  inputRatePerMillion: number;
+  outputRatePerMillion: number;
+  cacheCreationRatePerMillion: number;
+  cacheReadRatePerMillion: number;
+  serverErrorRecoveryMinutes: number;
+  displayUsageMultiplier: number;
+  sortOrder: number;
+  degradedUntil: string | null;
+  degradedReason: string | null;
+  degradedStatusCode: number | null;
+  keys: UpstreamChannelKey[];
+  modelRates: UpstreamModelRate[];
+  keyCounts: Record<UpstreamKeyAgentType, number>;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type MarkdownHeadingLevel = 1 | 2 | 3 | 4;
 
 type MarkdownBlock =
@@ -209,9 +305,11 @@ const dictionary = {
     dashboard: '概览',
     keys: '密钥',
     usage: '用量',
-    plans: '套餐',
+    plans: '套餐/余额',
     logs: '日志',
     guide: '向导',
+    openMenu: '打开菜单',
+    closeMenu: '关闭菜单',
     guideTitle: 'RelayHub 向导',
     guideIntroEyebrow: '快速上手',
     guideIntro: '从如何安装 Claude Code / Codex 客户端，到让AI执行第一条命令的五个简单步骤。从下方选择您的操作系统，以获得向导的帮助。',
@@ -233,12 +331,52 @@ const dictionary = {
     currentPlan: '当前套餐',
     changePlan: '更换套餐',
     billingLabel: '账单',
-    plansAndBilling: '方案与账单',
+    plansAndBilling: '套餐/余额',
+    myOrders: '我的订单',
+    claimOrderCode: '领取兑换码',
+    claimOrderTitle: '订单取码',
+    claimOrderHint: '输入已付款订单号，领取系统自动生成的兑换码。',
+    orderNumber: '订单号',
+    orderNumberPlaceholder: '请输入订单号',
+    claimRecordTitle: '领取记录',
+    claimRecordHint: '仅展示近 30 天内由当前账号领取的订单。',
+    orderItem: '商品',
+    claimTime: '领取时间',
+    claimSuccess: '兑换码已领取。',
+    copyCodes: '复制兑换码',
+    copiedCodes: '已复制兑换码',
+    deliveryStatus_pending: '待处理',
+    deliveryStatus_ready: '待领取',
+    deliveryStatus_claimed: '已领取',
+    deliveryStatus_skipped: '已跳过',
+    deliveryStatus_failed: '失败',
     billingCurrentPlan: '当前方案',
     freePlan: 'Free',
     currentFreePlan: '您正在使用免费版。',
     upgradePlanHint: '升级以解锁更高速率限制和优先访问权。',
     redeemCard: '礼品卡',
+    giftCards: '礼品码',
+    giftCardManagement: '礼品码管理',
+    giftCardManagementHint: '创建套餐卡或余额卡，复制生成的卡密后发放给用户兑换。',
+    createGiftCard: '生成礼品码',
+    giftCardType: '礼品卡类型',
+    giftCardPlanType: '套餐',
+    giftCardCreditType: '余额',
+    giftCardAmount: '余额金额',
+    giftCardQuantity: '生成数量',
+    giftCardDuration: '有效月份',
+    giftCardPrefix: '卡密前缀',
+    generatedGiftCards: '本次生成',
+    createdBy: '创建人',
+    giftCardTotal: '共 {total} 个礼品码',
+    redeemed: '已兑换',
+    unredeemed: '未兑换',
+    revoked: '已撤销',
+    revokedBy: '撤销人',
+    giftCardRevoked: '兑换码已撤销。',
+    revokeGiftCard: '撤销兑换码',
+    revokeGiftCardConfirm: '确认撤销这个未使用的兑换码？撤销后用户将无法兑换。',
+    redeemedBy: '使用人',
     redeemCardHint: '输入礼品卡卡密，可增加自由额度，或兑换/续期套餐。',
     redeemCardPlaceholder: 'XXXX-XXXX-XXXX-XXXX',
     redeem: '兑换',
@@ -257,11 +395,20 @@ const dictionary = {
     monthlyBilling: '每月 · 按月计费',
     planFootnote: '* 适用用量限制。展示价格不含适用税费。价格和方案如有变动，保留最终解释权。升级立即生效，当前方案未使用的时间将折算。',
     purchaseChannelTitle: '选择购买渠道',
-    purchaseChannelDescription: '购买 {plan} 后会在新窗口打开对应商品链接。',
-    rechargeChannelDescription: '充值额度会在新窗口打开对应商品链接。',
+    purchaseChannelDescription: '选择购买渠道和套餐后，点击去购买打开对应商品链接。',
+    rechargeChannelDescription: '选择购买渠道和额度后，点击去购买打开对应商品链接。',
+    purchaseProductTitle: '选择商品',
+    purchasePlanTitle: '套餐',
+    purchaseCreditTitle: '额度',
+    goPurchase: '去购买',
+    productManagement: '商品管理',
+    productManagementHint: '维护套餐和额度在淘宝、闲鱼的商品链接。',
+    saveProducts: '保存商品链接',
+    productLinksSaved: '商品链接已保存。',
+    channelManagement: '渠道管理',
     taobao: '淘宝',
     xianyu: '闲鱼',
-    balance: '剩余余额',
+    balance: '余额',
     recharge: '充值',
     todayUsage: '今日用量',
     todayRequests: '今日请求',
@@ -401,9 +548,11 @@ const dictionary = {
     dashboard: '概覽',
     keys: '金鑰',
     usage: '用量',
-    plans: '套餐',
+    plans: '套餐/餘額',
     logs: '日誌',
     guide: '向導',
+    openMenu: '開啟選單',
+    closeMenu: '關閉選單',
     guideTitle: 'RelayHub 向導',
     guideIntroEyebrow: '快速上手',
     guideIntro: '從如何安裝 Claude Code / Codex 客戶端，到讓 AI 執行第一條命令的五個簡單步驟。從下方選擇您的作業系統，以獲得向導的幫助。',
@@ -425,12 +574,52 @@ const dictionary = {
     currentPlan: '目前套餐',
     changePlan: '更換套餐',
     billingLabel: '帳單',
-    plansAndBilling: '方案與帳單',
+    plansAndBilling: '套餐/餘額',
+    myOrders: '我的訂單',
+    claimOrderCode: '領取兌換碼',
+    claimOrderTitle: '訂單取碼',
+    claimOrderHint: '輸入已付款訂單號，領取系統自動生成的兌換碼。',
+    orderNumber: '訂單號',
+    orderNumberPlaceholder: '請輸入訂單號',
+    claimRecordTitle: '領取記錄',
+    claimRecordHint: '僅展示近 30 天內由目前帳號領取的訂單。',
+    orderItem: '商品',
+    claimTime: '領取時間',
+    claimSuccess: '兌換碼已領取。',
+    copyCodes: '複製兌換碼',
+    copiedCodes: '已複製兌換碼',
+    deliveryStatus_pending: '待處理',
+    deliveryStatus_ready: '待領取',
+    deliveryStatus_claimed: '已領取',
+    deliveryStatus_skipped: '已略過',
+    deliveryStatus_failed: '失敗',
     billingCurrentPlan: '目前方案',
     freePlan: 'Free',
     currentFreePlan: '您正在使用免費版。',
     upgradePlanHint: '升級以解鎖更高速率限制和優先存取權。',
     redeemCard: '禮品卡',
+    giftCards: '禮品碼',
+    giftCardManagement: '禮品碼管理',
+    giftCardManagementHint: '建立套餐卡或餘額卡，複製生成的卡密後發放給用戶兌換。',
+    createGiftCard: '生成禮品碼',
+    giftCardType: '禮品卡類型',
+    giftCardPlanType: '套餐',
+    giftCardCreditType: '餘額',
+    giftCardAmount: '餘額金額',
+    giftCardQuantity: '生成數量',
+    giftCardDuration: '有效月份',
+    giftCardPrefix: '卡密前綴',
+    generatedGiftCards: '本次生成',
+    createdBy: '建立人',
+    giftCardTotal: '共 {total} 個禮品碼',
+    redeemed: '已兌換',
+    unredeemed: '未兌換',
+    revoked: '已撤銷',
+    revokedBy: '撤銷人',
+    giftCardRevoked: '兌換碼已撤銷。',
+    revokeGiftCard: '撤銷兌換碼',
+    revokeGiftCardConfirm: '確認撤銷這個未使用的兌換碼？撤銷後用戶將無法兌換。',
+    redeemedBy: '使用人',
     redeemCardHint: '輸入禮品卡卡密，可增加自由額度，或兌換/續期套餐。',
     redeemCardPlaceholder: 'XXXX-XXXX-XXXX-XXXX',
     redeem: '兌換',
@@ -449,11 +638,20 @@ const dictionary = {
     monthlyBilling: '每月 · 按月計費',
     planFootnote: '* 適用用量限制。展示價格不含適用稅費。價格和方案如有變動，保留最終解釋權。升級立即生效，當前方案未使用的時間將折算。',
     purchaseChannelTitle: '選擇購買渠道',
-    purchaseChannelDescription: '購買 {plan} 後會在新視窗開啟對應商品連結。',
-    rechargeChannelDescription: '儲值額度會在新視窗開啟對應商品連結。',
+    purchaseChannelDescription: '選擇購買渠道和套餐後，點擊去購買開啟對應商品連結。',
+    rechargeChannelDescription: '選擇購買渠道和額度後，點擊去購買開啟對應商品連結。',
+    purchaseProductTitle: '選擇商品',
+    purchasePlanTitle: '套餐',
+    purchaseCreditTitle: '額度',
+    goPurchase: '去購買',
+    productManagement: '商品管理',
+    productManagementHint: '維護套餐和額度在淘寶、閒魚的商品連結。',
+    saveProducts: '儲存商品連結',
+    productLinksSaved: '商品連結已儲存。',
+    channelManagement: '渠道管理',
     taobao: '淘寶',
     xianyu: '閒魚',
-    balance: '剩餘餘額',
+    balance: '餘額',
     recharge: '儲值',
     todayUsage: '今日用量',
     todayRequests: '今日請求',
@@ -593,9 +791,11 @@ const dictionary = {
     dashboard: 'Overview',
     keys: 'Keys',
     usage: 'Usage',
-    plans: 'Plans',
+    plans: 'Plans / Balance',
     logs: 'Logs',
     guide: 'Guide',
+    openMenu: 'Open menu',
+    closeMenu: 'Close menu',
     guideTitle: 'RelayHub Guide',
     guideIntroEyebrow: 'Getting started',
     guideIntro: 'Five simple steps from installing the Claude Code / Codex client to asking AI to run its first command. Choose your operating system below to get guided help.',
@@ -617,12 +817,52 @@ const dictionary = {
     currentPlan: 'Current plan',
     changePlan: 'Change plan',
     billingLabel: 'Billing',
-    plansAndBilling: 'Plans & Billing',
+    plansAndBilling: 'Plans / Balance',
+    myOrders: 'My orders',
+    claimOrderCode: 'Claim code',
+    claimOrderTitle: 'Order code claim',
+    claimOrderHint: 'Enter a paid order number to claim the gift code generated for it.',
+    orderNumber: 'Order number',
+    orderNumberPlaceholder: 'Enter order number',
+    claimRecordTitle: 'Claim records',
+    claimRecordHint: 'Shows orders claimed by this account in the last 30 days.',
+    orderItem: 'Item',
+    claimTime: 'Claimed at',
+    claimSuccess: 'Gift code claimed.',
+    copyCodes: 'Copy codes',
+    copiedCodes: 'Codes copied',
+    deliveryStatus_pending: 'Pending',
+    deliveryStatus_ready: 'Ready',
+    deliveryStatus_claimed: 'Claimed',
+    deliveryStatus_skipped: 'Skipped',
+    deliveryStatus_failed: 'Failed',
     billingCurrentPlan: 'Current plan',
     freePlan: 'Free',
     currentFreePlan: 'You are using the free plan.',
     upgradePlanHint: 'Upgrade to unlock higher rate limits and priority access.',
     redeemCard: 'Gift card',
+    giftCards: 'Gift codes',
+    giftCardManagement: 'Gift code management',
+    giftCardManagementHint: 'Create plan cards or balance cards, then copy the generated codes for users to redeem.',
+    createGiftCard: 'Generate gift codes',
+    giftCardType: 'Gift card type',
+    giftCardPlanType: 'Plan',
+    giftCardCreditType: 'Balance',
+    giftCardAmount: 'Balance amount',
+    giftCardQuantity: 'Quantity',
+    giftCardDuration: 'Months',
+    giftCardPrefix: 'Code prefix',
+    generatedGiftCards: 'Generated now',
+    createdBy: 'Created by',
+    giftCardTotal: '{total} gift codes',
+    redeemed: 'Redeemed',
+    unredeemed: 'Available',
+    revoked: 'Revoked',
+    revokedBy: 'Revoked by',
+    giftCardRevoked: 'Gift code revoked.',
+    revokeGiftCard: 'Revoke gift code',
+    revokeGiftCardConfirm: 'Revoke this unused gift code? Users will not be able to redeem it afterward.',
+    redeemedBy: 'Used by',
     redeemCardHint: 'Enter a gift card code to add free credit or redeem/renew a plan.',
     redeemCardPlaceholder: 'XXXX-XXXX-XXXX-XXXX',
     redeem: 'Redeem',
@@ -641,8 +881,17 @@ const dictionary = {
     monthlyBilling: 'Monthly · billed monthly',
     planFootnote: '* Usage limits apply. Displayed prices do not include applicable taxes. Prices and plans may change. Upgrades take effect immediately and unused time is prorated.',
     purchaseChannelTitle: 'Choose purchase channel',
-    purchaseChannelDescription: 'Buying {plan} opens the matching product link in a new window.',
-    rechargeChannelDescription: 'Recharge opens the matching product link in a new window.',
+    purchaseChannelDescription: 'Choose a channel and plan, then click Buy to open the matching product link.',
+    rechargeChannelDescription: 'Choose a channel and credit amount, then click Buy to open the matching product link.',
+    purchaseProductTitle: 'Choose product',
+    purchasePlanTitle: 'Plan',
+    purchaseCreditTitle: 'Credit',
+    goPurchase: 'Buy',
+    productManagement: 'Product management',
+    productManagementHint: 'Maintain Taobao and Xianyu product links for plans and credit packs.',
+    saveProducts: 'Save product links',
+    productLinksSaved: 'Product links saved.',
+    channelManagement: 'Channel management',
     taobao: 'Taobao',
     xianyu: 'Xianyu',
     balance: 'Remaining balance',
@@ -827,6 +1076,7 @@ const defaultBootstrap: Bootstrap = {
   account: defaultAccount,
   summary: defaultSummary,
   plans: [],
+  productLinks: [],
   keys: []
 };
 
@@ -847,6 +1097,27 @@ type PurchaseChannel = {
   labelKey: 'taobao' | 'xianyu';
 };
 
+type CreditProduct = {
+  id: string;
+  amountUsd: number;
+  priceCents: number;
+};
+
+type PurchaseProductOption = {
+  itemType: ProductItemType;
+  itemId: string;
+  name: string;
+  priceLabel: string;
+  description?: string;
+};
+
+type PlanProductOption = PurchaseProductOption & {
+  itemType: 'plan';
+  plan: UpgradePlan;
+};
+
+type PurchaseMode = ProductItemType;
+
 type GiftCardCard = {
   code: string;
   type: 'credit' | 'plan';
@@ -858,6 +1129,77 @@ type GiftCardCard = {
   planRank: number;
   durationMonths: number;
   redeemedAt: string | null;
+  revokedAt: string | null;
+  createdByUserId?: string | null;
+  createdByEmail?: string | null;
+  redeemedByUserId?: string | null;
+  redeemedByEmail?: string | null;
+  revokedByUserId?: string | null;
+  revokedByEmail?: string | null;
+  createdAt?: string;
+};
+
+type AdminGiftCard = Required<Pick<GiftCardCard, 'code' | 'type' | 'amountCents' | 'planId' | 'planName' | 'fiveHourTokenLimit' | 'weeklyTokenLimit' | 'planRank' | 'durationMonths' | 'redeemedAt' | 'revokedAt'>> & {
+  createdByUserId: string | null;
+  createdByEmail: string | null;
+  redeemedByUserId: string | null;
+  redeemedByEmail: string | null;
+  revokedByUserId: string | null;
+  revokedByEmail: string | null;
+  createdAt: string;
+};
+
+type GiftCardPage = {
+  giftCards: AdminGiftCard[];
+  total: number;
+  typeCounts: Record<GiftCardFormType, number>;
+  page: number;
+  pageSize: number;
+};
+
+type TaobaoProductMapping = {
+  id: string;
+  numIid: string;
+  skuId: string | null;
+  title: string;
+  giftType: 'credit' | 'plan';
+  amountCents: number;
+  planId: string | null;
+  durationMonths: number;
+  quantity: number;
+  isActive: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type TaobaoShop = {
+  id: string;
+  nick: string;
+  sessionExpiresAt: string | null;
+  messagePermittedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type PlatformOrder = {
+  id: string;
+  platform: PurchaseChannelId;
+  shopId: string | null;
+  orderId: string;
+  subOrderId: string;
+  buyerNick: string;
+  itemId: string;
+  skuId: string | null;
+  title: string;
+  status: string;
+  giftCardCode: string | null;
+  deliveryStatus: 'pending' | 'ready' | 'claimed' | 'skipped' | 'failed';
+  deliveryMessage: string | null;
+  claimedAt: string | null;
+  claimedByUserId: string | null;
+  lastEventAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type GiftCardCurrentPlan = {
@@ -917,14 +1259,16 @@ const upgradePlans: UpgradePlan[] = [
   }
 ];
 
-const planPurchaseLinks: Record<PurchaseChannelId, string> = {
-  taobao: 'https://www.taobao.com/?transferStationProduct=plan',
-  xianyu: 'https://www.goofish.com/?transferStationProduct=plan'
-};
+const creditProducts: CreditProduct[] = [
+  { id: '20', amountUsd: 20, priceCents: 599 },
+  { id: '50', amountUsd: 50, priceCents: 1199 },
+  { id: '100', amountUsd: 100, priceCents: 2199 },
+  { id: '200', amountUsd: 200, priceCents: 4699 }
+];
 
-const rechargePurchaseLinks: Record<PurchaseChannelId, string> = {
-  taobao: 'https://www.taobao.com/?transferStationProduct=recharge',
-  xianyu: 'https://www.goofish.com/?transferStationProduct=recharge'
+const defaultPurchaseLinks: Record<PurchaseChannelId, string> = {
+  taobao: 'https://www.taobao.com/',
+  xianyu: 'https://www.goofish.com/'
 };
 
 const guideIconSrc = '/guide-icon.png';
@@ -1054,12 +1398,131 @@ function unknownErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function tr(t: Record<string, string>, key: string, fallback: string) {
+  return t[key] || fallback;
+}
+
+type ToastVariant = 'success' | 'error' | 'info';
+
+type ToastItem = {
+  id: number;
+  message: string;
+  variant: ToastVariant;
+};
+
+type ToastListener = (toast: ToastItem) => void;
+
+const toastListeners = new Set<ToastListener>();
+let nextToastId = 0;
+
+function showToast(message: string, variant: ToastVariant = 'info') {
+  const text = message.trim();
+  if (!text) return;
+
+  const toast: ToastItem = {
+    id: Date.now() + nextToastId,
+    message: text,
+    variant
+  };
+  nextToastId += 1;
+  toastListeners.forEach((listener) => listener(toast));
+}
+
+function showErrorToast(message: string) {
+  showToast(message, 'error');
+}
+
+function showSuccessToast(message: string) {
+  showToast(message, 'success');
+}
+
+function ToastViewport() {
+  const [toasts, setToasts] = React.useState<ToastItem[]>([]);
+
+  React.useEffect(() => {
+    const listener: ToastListener = (toast) => {
+      setToasts((current) => [...current, toast].slice(-4));
+      window.setTimeout(() => {
+        setToasts((current) => current.filter((item) => item.id !== toast.id));
+      }, 4200);
+    };
+
+    toastListeners.add(listener);
+    return () => {
+      toastListeners.delete(listener);
+    };
+  }, []);
+
+  if (!toasts.length) return null;
+
+  return (
+    <div className="toast-viewport" aria-live="polite" aria-relevant="additions">
+      {toasts.map((toast) => (
+        <div className={`toast toast-${toast.variant}`} role={toast.variant === 'error' ? 'alert' : 'status'} key={toast.id}>
+          <span className="toast-mark">
+            {toast.variant === 'success' ? <Check size={14} /> : toast.variant === 'error' ? <Ban size={14} /> : <Activity size={14} />}
+          </span>
+          <p>{toast.message}</p>
+          <button type="button" className="toast-close-button" onClick={() => setToasts((current) => current.filter((item) => item.id !== toast.id))} aria-label="Close notification">
+            <X size={14} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function productLinkUrl(
+  productLinks: ProductLink[],
+  itemType: ProductItemType,
+  itemId: string,
+  channel: PurchaseChannelId
+) {
+  return (
+    productLinks.find((link) => link.itemType === itemType && link.itemId === itemId && link.channel === channel)?.url ||
+    defaultPurchaseLinks[channel]
+  );
+}
+
+function planProductOptions(): PlanProductOption[] {
+  return upgradePlans.map((plan) => ({
+    itemType: 'plan' as const,
+    itemId: plan.id,
+    name: plan.name,
+    priceLabel: `￥${plan.monthlyPriceYuan}`,
+    description: plan.subtitle,
+    plan
+  }));
+}
+
+function creditProductOptions() {
+  return creditProducts.map((credit) => ({
+    itemType: 'credit' as const,
+    itemId: credit.id,
+    name: `$${credit.amountUsd}`,
+    priceLabel: `￥${(credit.priceCents / 100).toFixed(2)}`
+  }));
+}
+
+function giftPlanProductOptions(plans: Plan[]) {
+  const activePlanIds = new Set(plans.filter((plan) => plan.isActive && plan.id !== 'free').map((plan) => plan.id));
+  return planProductOptions().filter((option) => activePlanIds.has(option.itemId));
+}
+
+function planProductOptionLabel(option: PlanProductOption) {
+  return `${option.name} · ${option.description || option.plan.subtitle} · ${option.priceLabel}`;
+}
+
 const routeTabSegments: Record<Tab, string> = {
   dashboard: 'dashboard',
   keys: 'keys',
   usage: 'usage',
   plans: 'plans',
+  orders: 'orders',
   logs: 'logs',
+  'gift-cards': 'gift-cards',
+  products: 'products',
+  channels: 'channels',
   guide: 'guide'
 };
 
@@ -1071,6 +1534,9 @@ const routeSegmentTabs = Object.entries(routeTabSegments).reduce<Record<string, 
 function resolveRoute(route: string): { tab: Tab; planView: PlanView } {
   const normalizedRoute = route.replace(/^\/+/, '').replace(/\/+$/, '');
   const [segment = '', viewSegment = ''] = normalizedRoute.split('/');
+  if (segment === 'taobao-claim' || segment === 'claim-code') {
+    return { tab: 'orders', planView: 'billing' };
+  }
   const tab = routeSegmentTabs[segment] || 'dashboard';
   return {
     tab,
@@ -1167,11 +1633,103 @@ function getPageTitle(tab: Tab, planView: PlanView, t: Record<string, string>) {
     dashboard: t.dashboard,
     keys: t.keyManagement,
     usage: t.usage,
+    orders: tr(t, 'myOrders', '我的订单'),
     logs: t.usageLogs,
+    'gift-cards': tr(t, 'giftCardManagement', '礼品码管理'),
+    products: tr(t, 'productManagement', '商品管理'),
+    channels: tr(t, 'channelManagement', '渠道管理'),
     guide: t.guideTitle
   };
 
   return pageTitles[tab];
+}
+
+function MobileMenuButton({
+  isOpen,
+  label,
+  onClick
+}: {
+  isOpen: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="mobile-menu-button icon-button"
+      aria-controls="app-sidebar"
+      aria-expanded={isOpen}
+      aria-label={label}
+      onClick={onClick}
+    >
+      <Menu size={18} />
+    </button>
+  );
+}
+
+function AppSidebar({
+  activeTab,
+  brand,
+  closeLabel,
+  isOpen,
+  nav,
+  onClose,
+  onNavigate,
+  subtitle
+}: {
+  activeTab: Tab;
+  brand: string;
+  closeLabel: string;
+  isOpen: boolean;
+  nav: NavMenuItem[];
+  onClose: () => void;
+  onNavigate: (tab: Tab) => void;
+  subtitle: string;
+}) {
+  return (
+    <>
+      <button
+        type="button"
+        className={isOpen ? 'sidebar-scrim is-open' : 'sidebar-scrim'}
+        aria-hidden={!isOpen}
+        aria-label={closeLabel}
+        tabIndex={isOpen ? 0 : -1}
+        onClick={onClose}
+      />
+      <aside id="app-sidebar" className={isOpen ? 'sidebar is-open' : 'sidebar'}>
+        <div className="sidebar-head">
+          <div className="brand-block">
+            <div className="brand-mark">
+              <BrandMark />
+            </div>
+            <div>
+              <h1>{brand}</h1>
+              <BrandSubtitle subtitle={subtitle} />
+            </div>
+          </div>
+          <button type="button" className="sidebar-close-button icon-button" aria-label={closeLabel} onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+        <nav className="nav-list">
+          {nav.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                type="button"
+                key={item.id}
+                className={activeTab === item.id ? 'nav-item active' : 'nav-item'}
+                onClick={() => onNavigate(item.id)}
+              >
+                <Icon size={18} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </aside>
+    </>
+  );
 }
 
 function App() {
@@ -1184,7 +1742,7 @@ function App() {
   const [authToken, setAuthToken] = React.useState(localStorage.getItem('authToken') || '');
   const [data, setData] = React.useState<Bootstrap>(defaultBootstrap);
   const [loading, setLoading] = React.useState(true);
-  const [notice, setNotice] = React.useState('');
+  const [isNavDrawerOpen, setIsNavDrawerOpen] = React.useState(false);
   const t = dictionary[language];
 
   const headers = React.useMemo(() => {
@@ -1205,7 +1763,6 @@ function App() {
         localStorage.removeItem('authToken');
         setAuthToken('');
         setData(defaultBootstrap);
-        setNotice('');
         setLoading(false);
         return;
       }
@@ -1215,9 +1772,8 @@ function App() {
       }
       const bootstrap = payload as Bootstrap;
       setData(bootstrap);
-      setNotice('');
     } catch (error) {
-      setNotice(unknownErrorMessage(error, t.requestFailed));
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
     } finally {
       setLoading(false);
     }
@@ -1234,6 +1790,7 @@ function App() {
       const nextRoute = readHistoryRoute();
       setActiveTab(nextRoute.tab);
       setPlanView(nextRoute.planView);
+      setIsNavDrawerOpen(false);
     }
 
     window.addEventListener('popstate', syncRouteFromHistory);
@@ -1270,6 +1827,19 @@ function App() {
     };
   }, [accentTheme, themeMode]);
 
+  React.useEffect(() => {
+    if (!isNavDrawerOpen) return undefined;
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setIsNavDrawerOpen(false);
+    }
+
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isNavDrawerOpen]);
+
   function changeThemeMode(nextThemeMode: ThemeMode) {
     setThemeMode(nextThemeMode);
     document.documentElement.dataset.themeMode = resolveThemeMode(nextThemeMode);
@@ -1279,22 +1849,36 @@ function App() {
     localStorage.removeItem('authToken');
     setAuthToken('');
     setData(defaultBootstrap);
+    setIsNavDrawerOpen(false);
   }
 
   const isPlansPage = activeTab === 'plans';
   const pageTitle = getPageTitle(activeTab, planView, t);
-  const nav = [
+  const nav: NavMenuItem[] = [
     { id: 'dashboard' as const, label: t.dashboard, icon: LayoutDashboard },
     { id: 'keys' as const, label: t.keys, icon: KeyRound },
     { id: 'usage' as const, label: t.usage, icon: BarChart3 },
     { id: 'plans' as const, label: t.plans, icon: CreditCard },
+    { id: 'orders' as const, label: tr(t, 'myOrders', '我的订单'), icon: ShoppingBag },
     { id: 'logs' as const, label: t.logs, icon: Activity },
+    ...(data.user.role === 'admin' ? [{ id: 'gift-cards' as const, label: tr(t, 'giftCards', '礼品码'), icon: Gift }] : []),
+    ...(data.user.role === 'admin' ? [{ id: 'products' as const, label: tr(t, 'productManagement', '商品管理'), icon: ShoppingBag }] : []),
+    ...(data.user.role === 'admin' ? [{ id: 'channels' as const, label: tr(t, 'channelManagement', '渠道管理'), icon: Route }] : []),
     { id: 'guide' as const, label: t.guide, icon: GuideMenuIcon }
   ];
+  const openMenuLabel = t.openMenu;
+  const closeMenuLabel = t.closeMenu;
+
+  React.useEffect(() => {
+    if ((activeTab === 'channels' || activeTab === 'gift-cards' || activeTab === 'products') && data.user.role !== 'admin') {
+      navigate('dashboard');
+    }
+  }, [activeTab, data.user.role]);
 
   function navigate(tab: Tab, nextPlanView: PlanView = 'billing') {
     setActiveTab(tab);
     setPlanView(tab === 'plans' ? nextPlanView : 'billing');
+    setIsNavDrawerOpen(false);
     writeHistoryRoute(tab, tab === 'plans' ? nextPlanView : 'billing');
   }
 
@@ -1305,6 +1889,52 @@ function App() {
   function changePlanView(nextPlanView: PlanView) {
     setPlanView(nextPlanView);
     writeHistoryRoute('plans', nextPlanView);
+  }
+
+  if (!authToken && activeTab === 'guide') {
+    return (
+      <div className="app-shell public-guide-shell">
+        <AppSidebar
+          activeTab={activeTab}
+          brand={t.brand}
+          closeLabel={closeMenuLabel}
+          isOpen={isNavDrawerOpen}
+          nav={[{ id: 'guide', label: t.guide, icon: GuideMenuIcon }]}
+          onClose={() => setIsNavDrawerOpen(false)}
+          onNavigate={navigate}
+          subtitle={t.subtitle}
+        />
+
+        <main className="main-panel">
+          <header className="topbar">
+            <div className="topbar-title-row">
+              <MobileMenuButton
+                isOpen={isNavDrawerOpen}
+                label={isNavDrawerOpen ? closeMenuLabel : openMenuLabel}
+                onClick={() => setIsNavDrawerOpen((isOpen) => !isOpen)}
+              />
+              <div className="topbar-title">
+                <h1>{t.guideTitle}</h1>
+              </div>
+            </div>
+            <div className="topbar-actions">
+              <LanguageMenu language={language} setLanguage={setLanguage} />
+              <ThemeMenu
+                themeMode={themeMode}
+                setThemeMode={changeThemeMode}
+                accentTheme={accentTheme}
+                setAccentTheme={setAccentTheme}
+                t={t}
+              />
+              <button type="button" className="secondary-button" onClick={() => navigate('dashboard')}>
+                {t.login}
+              </button>
+            </div>
+          </header>
+          <GuidePage t={t} />
+        </main>
+      </div>
+    );
   }
 
   if (!authToken) {
@@ -1321,7 +1951,6 @@ function App() {
           localStorage.setItem('authToken', session.token);
           setAuthToken(session.token);
           setData({ ...defaultBootstrap, user: session.user });
-          setNotice('');
         }}
       />
     );
@@ -1329,38 +1958,28 @@ function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand-block">
-          <div className="brand-mark">
-            <BrandMark />
-          </div>
-          <div>
-            <h1>{t.brand}</h1>
-            <BrandSubtitle subtitle={t.subtitle} />
-          </div>
-        </div>
-        <nav className="nav-list">
-          {nav.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                type="button"
-                key={item.id}
-                className={activeTab === item.id ? 'nav-item active' : 'nav-item'}
-                onClick={() => navigate(item.id)}
-              >
-                <Icon size={18} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-      </aside>
+      <AppSidebar
+        activeTab={activeTab}
+        brand={t.brand}
+        closeLabel={closeMenuLabel}
+        isOpen={isNavDrawerOpen}
+        nav={nav}
+        onClose={() => setIsNavDrawerOpen(false)}
+        onNavigate={navigate}
+        subtitle={t.subtitle}
+      />
 
       <main className={isPlansPage ? 'main-panel plans-main-panel' : 'main-panel'}>
         <header className="topbar">
-          <div className="topbar-title">
-            <h1>{pageTitle}</h1>
+          <div className="topbar-title-row">
+            <MobileMenuButton
+              isOpen={isNavDrawerOpen}
+              label={isNavDrawerOpen ? closeMenuLabel : openMenuLabel}
+              onClick={() => setIsNavDrawerOpen((isOpen) => !isOpen)}
+            />
+            <div className="topbar-title">
+              <h1>{pageTitle}</h1>
+            </div>
           </div>
           <div className="topbar-actions">
             <LanguageMenu language={language} setLanguage={setLanguage} />
@@ -1377,8 +1996,6 @@ function App() {
             <AccountMenu user={data.user} t={t} onLogout={logout} />
           </div>
         </header>
-
-        {notice ? <div className="notice">{notice}</div> : null}
         {loading ? <div className="loading-line" /> : null}
 
         {activeTab === 'dashboard' ? (
@@ -1396,7 +2013,15 @@ function App() {
             setView={changePlanView}
           />
         ) : null}
+        {activeTab === 'orders' ? <OrdersPanel headers={headers} t={t} /> : null}
         {activeTab === 'logs' ? <LogsPanel keys={data.keys} headers={headers} t={t} /> : null}
+        {activeTab === 'gift-cards' && data.user.role === 'admin' ? (
+          <GiftCardsPanel headers={headers} plans={data.plans} t={t} />
+        ) : null}
+        {activeTab === 'products' && data.user.role === 'admin' ? (
+          <ProductLinksPanel headers={headers} initialProductLinks={data.productLinks} t={t} />
+        ) : null}
+        {activeTab === 'channels' && data.user.role === 'admin' ? <ChannelsPanel headers={headers} t={t} /> : null}
         {activeTab === 'guide' ? <GuidePage t={t} /> : null}
       </main>
     </div>
@@ -1430,12 +2055,10 @@ function AuthPage({
   const [captchaToken, setCaptchaToken] = React.useState('');
   const [verificationResetKey, setVerificationResetKey] = React.useState(0);
   const [isVerificationOpen, setIsVerificationOpen] = React.useState(false);
-  const [notice, setNotice] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
 
   async function authenticate(verifiedToken: string) {
     setSubmitting(true);
-    setNotice('');
     try {
       const response = await fetch(mode === 'login' ? '/api/auth/login' : '/api/auth/register', {
         method: 'POST',
@@ -1449,14 +2072,14 @@ function AuthPage({
       });
       const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setNotice(responseErrorMessage(response, payload, t.requestFailed));
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
         setCaptchaToken('');
         setVerificationResetKey((value) => value + 1);
         return;
       }
       onAuthenticated(payload as AuthSession);
     } catch (error) {
-      setNotice(unknownErrorMessage(error, t.requestFailed));
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
       setCaptchaToken('');
       setVerificationResetKey((value) => value + 1);
     } finally {
@@ -1467,7 +2090,6 @@ function AuthPage({
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!captchaToken) {
-      setNotice('');
       setIsVerificationOpen(true);
       return;
     }
@@ -1484,7 +2106,6 @@ function AuthPage({
 
   function switchMode(nextMode: AuthMode) {
     setMode(nextMode);
-    setNotice('');
     setCaptchaToken('');
     setVerificationResetKey((value) => value + 1);
     setIsVerificationOpen(false);
@@ -1507,7 +2128,6 @@ function AuthPage({
           </div>
         </div>
         <form className="auth-form" onSubmit={submit} autoComplete="on">
-          {notice ? <div className="notice inline">{notice}</div> : null}
           <label>
             {t.email}
             <input
@@ -1794,6 +2414,166 @@ function AccountMenu({
   );
 }
 
+function OrdersPanel({ headers, t }: { headers: HeadersInit; t: Record<string, string> }) {
+  const [orderId, setOrderId] = React.useState('');
+  const [claimResult, setClaimResult] = React.useState<ClaimedOrder[]>([]);
+  const [claimedOrders, setClaimedOrders] = React.useState<ClaimedOrder[]>([]);
+  const [isClaiming, setIsClaiming] = React.useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = React.useState(false);
+  const [copiedKey, setCopiedKey] = React.useState('');
+
+  const loadClaimHistory = React.useCallback(async () => {
+    setIsLoadingHistory(true);
+    try {
+      const response = await fetch('/api/user/orders/claims?days=30', { headers });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setClaimedOrders((payload as { orders: ClaimedOrder[] }).orders || []);
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [headers, t.requestFailed]);
+
+  React.useEffect(() => {
+    void loadClaimHistory();
+  }, [loadClaimHistory]);
+
+  async function claim(event: React.FormEvent) {
+    event.preventDefault();
+    setIsClaiming(true);
+    setClaimResult([]);
+    try {
+      const response = await fetch('/api/user/orders/claim', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ orderId })
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setClaimResult((payload as { orders: ClaimedOrder[] }).orders || []);
+      showSuccessToast(tr(t, 'claimSuccess', '兑换码已领取。'));
+      await loadClaimHistory();
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setIsClaiming(false);
+    }
+  }
+
+  async function copyCodes(orders: ClaimedOrder[], key: string) {
+    const codes = orders.map((order) => order.giftCardCode).filter(Boolean).join('\n');
+    if (!codes) return;
+    await copyTextToClipboard(codes);
+    setCopiedKey(key);
+    window.setTimeout(() => setCopiedKey(''), 1400);
+  }
+
+  function orderKey(order: ClaimedOrder) {
+    return `${order.platform}:${order.orderId}:${order.subOrderId}`;
+  }
+
+  function statusLabel(status: ClaimedOrder['deliveryStatus']) {
+    return tr(t, `deliveryStatus_${status}`, status);
+  }
+
+  return (
+    <div className="orders-panel">
+      <section className="table-panel">
+        <div className="section-heading">
+          <div>
+            <h2>{tr(t, 'claimOrderTitle', '订单取码')}</h2>
+            <p>{tr(t, 'claimOrderHint', '输入已付款订单号，领取系统自动生成的兑换码。')}</p>
+          </div>
+        </div>
+        <form className="claim-form" onSubmit={claim}>
+          <input
+            value={orderId}
+            onChange={(event) => setOrderId(event.target.value)}
+            placeholder={tr(t, 'orderNumberPlaceholder', '请输入订单号')}
+            aria-label={tr(t, 'orderNumber', '订单号')}
+            required
+          />
+          <button type="submit" className="primary-button" disabled={isClaiming || !orderId.trim()}>
+            {isClaiming ? tr(t, 'verifying', '验证中...') : tr(t, 'claimOrderCode', '领取兑换码')}
+          </button>
+        </form>
+        {claimResult.length ? (
+          <div className="claim-result">
+            <div className="generated-gift-cards-head">
+              <strong>{tr(t, 'giftCards', '礼品码')}</strong>
+              <button type="button" className="secondary-button" onClick={() => void copyCodes(claimResult, 'claim-result')}>
+                {copiedKey === 'claim-result' ? <Check size={15} /> : <Copy size={15} />}
+                {copiedKey === 'claim-result' ? tr(t, 'copiedCodes', '已复制兑换码') : tr(t, 'copyCodes', '复制兑换码')}
+              </button>
+            </div>
+            {claimResult.map((order) => (
+              <article className="claim-code-row" key={orderKey(order)}>
+                <span>{order.title || order.subOrderId}</span>
+                <code>{order.giftCardCode}</code>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="table-panel">
+        <div className="section-heading">
+          <div>
+            <h2>{tr(t, 'claimRecordTitle', '领取记录')}</h2>
+            <p>{tr(t, 'claimRecordHint', '仅展示近 30 天内由当前账号领取的订单。')}</p>
+          </div>
+          <button type="button" className="secondary-button" onClick={() => void loadClaimHistory()}>
+            <RefreshCcw size={16} />
+            {t.refresh}
+          </button>
+        </div>
+        {isLoadingHistory ? <div className="loading-line" /> : null}
+        {claimedOrders.length ? (
+          <div className="order-history-table">
+            <div className="order-history-head">
+              <span>{tr(t, 'orderNumber', '订单号')}</span>
+              <span>{tr(t, 'taobao', '淘宝')}</span>
+              <span>{tr(t, 'orderItem', '商品')}</span>
+              <span>{tr(t, 'giftCards', '礼品码')}</span>
+              <span>{tr(t, 'claimTime', '领取时间')}</span>
+              <span>{t.status}</span>
+              <span>{t.copy}</span>
+            </div>
+            {claimedOrders.map((order) => {
+              const key = orderKey(order);
+              return (
+                <article className="order-history-row" key={key}>
+                  <strong>{order.orderId}</strong>
+                  <span>{t[order.platform] || order.platform}</span>
+                  <span>{order.title || order.subOrderId}</span>
+                  <code>{order.giftCardCode || '-'}</code>
+                  <span>{order.claimedAt ? fullDate(order.claimedAt) : '-'}</span>
+                  <span className={order.deliveryStatus === 'claimed' ? 'status-code ok' : 'status-code'}>
+                    {statusLabel(order.deliveryStatus)}
+                  </span>
+                  <button type="button" className="icon-button" onClick={() => void copyCodes([order], key)} title={t.copy}>
+                    {copiedKey === key ? <Check size={15} /> : <Copy size={15} />}
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <Empty t={t} />
+        )}
+      </section>
+    </div>
+  );
+}
+
 function SliderVerification({
   mode,
   t,
@@ -1826,12 +2606,12 @@ function SliderVerification({
       });
       const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setStatus(responseErrorMessage(response, payload, t.verificationFailed));
+        showErrorToast(responseErrorMessage(response, payload, t.verificationFailed));
         return;
       }
       setChallenge(payload as SliderChallenge);
     } catch (error) {
-      setStatus(unknownErrorMessage(error, t.verificationFailed));
+      showErrorToast(unknownErrorMessage(error, t.verificationFailed));
     } finally {
       setIsLoading(false);
     }
@@ -1857,7 +2637,8 @@ function SliderVerification({
       });
       const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setStatus(responseErrorMessage(response, payload, t.verificationFailed));
+        showErrorToast(responseErrorMessage(response, payload, t.verificationFailed));
+        setStatus(t.slideToVerify);
         setValue(0);
         onTokenChange('');
         void loadChallenge();
@@ -1868,7 +2649,8 @@ function SliderVerification({
       setStatus(t.verified);
       onTokenChange((payload as { captchaToken?: string }).captchaToken || '');
     } catch (error) {
-      setStatus(unknownErrorMessage(error, t.verificationFailed));
+      showErrorToast(unknownErrorMessage(error, t.verificationFailed));
+      setStatus(t.slideToVerify);
       setValue(0);
       onTokenChange('');
       void loadChallenge();
@@ -1972,11 +2754,6 @@ function OverviewPage({
   const welcomeName = data.user.displayName?.trim() || data.user.email.split('@')[0];
   const welcomeMessage = welcomeName ? t.overviewWelcomeNamed.replace('{name}', welcomeName) : t.overviewWelcome;
 
-  function openRechargeLink(channelId: PurchaseChannelId) {
-    window.open(rechargePurchaseLinks[channelId], '_blank', 'noopener,noreferrer');
-    setIsRechargeOpen(false);
-  }
-
   const quickEntries = [
     { label: t.keyManagement, icon: KeyRound, onClick: () => onNavigate('keys') },
     { label: t.viewUsage, icon: BarChart3, onClick: () => onNavigate('usage') },
@@ -2054,8 +2831,9 @@ function OverviewPage({
       {isRechargeOpen ? (
         <PurchaseChannelModal
           description={t.rechargeChannelDescription}
+          mode="credit"
+          productLinks={data.productLinks}
           onClose={() => setIsRechargeOpen(false)}
-          onOpenChannel={openRechargeLink}
           t={t}
         />
       ) : null}
@@ -2078,11 +2856,6 @@ function UsagePage({ data, t, onChangePlan }: { data: Bootstrap; t: Record<strin
     ? Math.round(data.summary.todayCostCents / data.summary.todayRequests)
     : 0;
   const currencyCode = currentPlan?.currency || 'CNY';
-
-  function openRechargeLink(channelId: PurchaseChannelId) {
-    window.open(rechargePurchaseLinks[channelId], '_blank', 'noopener,noreferrer');
-    setIsRechargeOpen(false);
-  }
 
   return (
     <section className="content-grid">
@@ -2148,8 +2921,9 @@ function UsagePage({ data, t, onChangePlan }: { data: Bootstrap; t: Record<strin
       {isRechargeOpen ? (
         <PurchaseChannelModal
           description={t.rechargeChannelDescription}
+          mode="credit"
+          productLinks={data.productLinks}
           onClose={() => setIsRechargeOpen(false)}
-          onOpenChannel={openRechargeLink}
           t={t}
         />
       ) : null}
@@ -2162,7 +2936,6 @@ function GuidePage({ t }: { t: Record<string, string> }) {
   const [selectedOs, setSelectedOs] = React.useState<GuideOsId>('macos');
   const [markdown, setMarkdown] = React.useState('');
   const [loading, setLoading] = React.useState(true);
-  const [notice, setNotice] = React.useState('');
   const availableOsOptions = guideOsOptionsByAgent[selectedAgent];
   const selectedOsOption = availableOsOptions.find((option) => option.id === selectedOs) || availableOsOptions[0];
   const documentSrc = guideDocumentSources[selectedAgent][selectedOsOption.id] || '';
@@ -2178,7 +2951,6 @@ function GuidePage({ t }: { t: Record<string, string> }) {
   React.useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
-    setNotice('');
     setMarkdown('');
 
     fetch(documentSrc, { signal: controller.signal })
@@ -2189,7 +2961,7 @@ function GuidePage({ t }: { t: Record<string, string> }) {
       .then((content) => setMarkdown(content))
       .catch((error) => {
         if (error instanceof DOMException && error.name === 'AbortError') return;
-        setNotice(error instanceof Error ? error.message : t.guideLoadError);
+        showErrorToast(error instanceof Error ? error.message : t.guideLoadError);
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -2254,7 +3026,6 @@ function GuidePage({ t }: { t: Record<string, string> }) {
             <p>{t.guideDocumentHint}</p>
           </div>
         </div>
-        {notice ? <div className="notice inline">{notice}</div> : null}
         {loading ? (
           <>
             <div className="loading-line" />
@@ -2641,7 +3412,6 @@ function KeysPanel({
   const [isRevoking, setIsRevoking] = React.useState(false);
   const [name, setName] = React.useState('');
   const [copiedId, setCopiedId] = React.useState('');
-  const [notice, setNotice] = React.useState('');
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -2653,15 +3423,15 @@ function KeysPanel({
       });
       const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setNotice(responseErrorMessage(response, payload, t.requestFailed));
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
         return;
       }
       setIsCreateOpen(false);
       setName('');
       await reload();
-      setNotice(t.createdKeySuccess);
+      showSuccessToast(t.createdKeySuccess);
     } catch (error) {
-      setNotice(unknownErrorMessage(error, t.requestFailed));
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
     }
   }
 
@@ -2670,13 +3440,12 @@ function KeysPanel({
       const response = await fetch(`/api/user/keys/${id}/secret`, { headers });
       const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setNotice(responseErrorMessage(response, payload, t.keyUnavailable));
+        showErrorToast(responseErrorMessage(response, payload, t.keyUnavailable));
         return null;
       }
-      setNotice('');
       return payload as KeySecret;
     } catch (error) {
-      setNotice(unknownErrorMessage(error, t.requestFailed));
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
       return null;
     }
   }
@@ -2687,14 +3456,13 @@ function KeysPanel({
       const response = await fetch(`/api/user/keys/${apiKey.id}`, { method: 'DELETE', headers });
       const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setNotice(responseErrorMessage(response, payload, t.requestFailed));
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
         return;
       }
-      setNotice('');
       setRevokeTarget(null);
       await reload();
     } catch (error) {
-      setNotice(unknownErrorMessage(error, t.requestFailed));
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
     } finally {
       setIsRevoking(false);
     }
@@ -2725,7 +3493,6 @@ function KeysPanel({
             {t.createKey}
           </button>
         </div>
-        {notice ? <div className="notice inline">{notice}</div> : null}
         <KeyRows
           keys={data.keys}
           t={t}
@@ -2938,6 +3705,2070 @@ function Meter({ label, value, used, limit }: { label: string; value: number; us
   );
 }
 
+type GiftCardFormType = 'plan' | 'credit';
+
+function GiftCardsPanel({ headers, plans, t }: { headers: HeadersInit; plans: Plan[]; t: Record<string, string> }) {
+  const eligiblePlans = React.useMemo(() => giftPlanProductOptions(plans), [plans]);
+  const defaultPlanId = eligiblePlans[0]?.itemId || '';
+  const [giftCardPage, setGiftCardPage] = React.useState<GiftCardPage>({
+    giftCards: [],
+    total: 0,
+    typeCounts: { plan: 0, credit: 0 },
+    page: 1,
+    pageSize: 20
+  });
+  const [generatedCards, setGeneratedCards] = React.useState<AdminGiftCard[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [isCreateOpen, setIsCreateOpen] = React.useState(false);
+  const [copiedCode, setCopiedCode] = React.useState('');
+  const [revokeTarget, setRevokeTarget] = React.useState<AdminGiftCard | null>(null);
+  const [isRevoking, setIsRevoking] = React.useState(false);
+  const [isGiftCardManagementExpanded, setIsGiftCardManagementExpanded] = React.useState(true);
+  const [activeGiftCardType, setActiveGiftCardType] = React.useState<GiftCardFormType>('plan');
+  const [giftCardPageNumber, setGiftCardPageNumber] = React.useState(1);
+  const [formType, setFormType] = React.useState<GiftCardFormType>('plan');
+  const [planId, setPlanId] = React.useState(defaultPlanId);
+  const [amountYuan, setAmountYuan] = React.useState('100');
+  const [durationMonths, setDurationMonths] = React.useState(1);
+  const [quantity, setQuantity] = React.useState(1);
+  const [prefix, setPrefix] = React.useState('RH');
+
+  React.useEffect(() => {
+    if (!planId && defaultPlanId) setPlanId(defaultPlanId);
+  }, [defaultPlanId, planId]);
+
+  const loadGiftCards = React.useCallback(async (nextPage = giftCardPageNumber, nextType = activeGiftCardType) => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        type: nextType,
+        page: String(nextPage),
+        pageSize: '20'
+      });
+      const response = await fetch(`/api/gift-cards?${params.toString()}`, { headers });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      const result = payload as GiftCardPage;
+      setGiftCardPage({
+        giftCards: result.giftCards || [],
+        total: result.total || 0,
+        typeCounts: result.typeCounts || { plan: 0, credit: 0 },
+        page: result.page || nextPage,
+        pageSize: result.pageSize || 20
+      });
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setLoading(false);
+    }
+  }, [activeGiftCardType, giftCardPageNumber, headers, t.requestFailed]);
+
+  React.useEffect(() => {
+    void loadGiftCards();
+  }, [loadGiftCards]);
+
+  function openCreate(nextType: GiftCardFormType = formType) {
+    setFormType(nextType);
+    setPlanId((current) => current || defaultPlanId);
+    setGeneratedCards([]);
+    setIsCreateOpen(true);
+  }
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    const body =
+      formType === 'credit'
+        ? {
+            type: 'credit',
+            amountCents: Math.max(1, Math.round(Number(amountYuan || 0) * 100)),
+            quantity,
+            prefix
+          }
+        : {
+            type: 'plan',
+            planId,
+            durationMonths,
+            quantity,
+            prefix
+          };
+
+    try {
+      const response = await fetch('/api/gift-cards', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      const result = payload as { giftCards: AdminGiftCard[] };
+      setGeneratedCards(result.giftCards || []);
+      setActiveGiftCardType(formType);
+      setGiftCardPageNumber(1);
+      await loadGiftCards(1, formType);
+      showSuccessToast(tr(t, 'giftCardsCreated', '礼品码已生成。'));
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    }
+  }
+
+  async function copyCode(code: string) {
+    await copyTextToClipboard(code);
+    setCopiedCode(code);
+    window.setTimeout(() => setCopiedCode(''), 1400);
+  }
+
+  async function copyGeneratedCodes() {
+    if (!generatedCards.length) return;
+    await copyTextToClipboard(generatedCards.map((card) => card.code).join('\n'));
+    setCopiedCode('__generated__');
+    window.setTimeout(() => setCopiedCode(''), 1400);
+  }
+
+  async function revokeGiftCard(card: AdminGiftCard) {
+    setIsRevoking(true);
+    try {
+      const response = await fetch(`/api/gift-cards/${encodeURIComponent(card.code)}/revoke`, {
+        method: 'PATCH',
+        headers
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setRevokeTarget(null);
+      await loadGiftCards();
+      showSuccessToast(tr(t, 'giftCardRevoked', '兑换码已撤销。'));
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setIsRevoking(false);
+    }
+  }
+
+  const pageCount = Math.max(1, Math.ceil(giftCardPage.total / giftCardPage.pageSize));
+  const planGiftCardCount = giftCardPage.typeCounts.plan || 0;
+  const creditGiftCardCount = giftCardPage.typeCounts.credit || 0;
+
+  function changeGiftCardType(nextType: GiftCardFormType) {
+    setActiveGiftCardType(nextType);
+    setGiftCardPageNumber(1);
+  }
+
+  return (
+    <section className="content-grid">
+      <section className="table-panel collapsible-panel">
+        <div className="section-heading">
+          <div>
+            <div className="channel-title-row">
+              <button
+                type="button"
+                className="channel-toggle-button"
+                onClick={() => setIsGiftCardManagementExpanded((value) => !value)}
+                aria-expanded={isGiftCardManagementExpanded}
+                title={isGiftCardManagementExpanded ? t.collapse : t.expand}
+              >
+                <ChevronDown size={16} className={isGiftCardManagementExpanded ? 'rotate-icon open' : 'rotate-icon'} />
+              </button>
+              <h2>{tr(t, 'giftCardManagement', '礼品码管理')}</h2>
+            </div>
+            <p>{tr(t, 'giftCardManagementHint', '创建套餐卡或余额卡，复制生成的卡密后发放给用户兑换。')}</p>
+          </div>
+          <button type="button" className="primary-button" onClick={() => openCreate()}>
+            <Plus size={17} />
+            {tr(t, 'createGiftCard', '生成礼品码')}
+          </button>
+        </div>
+        {isGiftCardManagementExpanded ? (
+          <div className="collapsible-panel-body">
+            {loading ? <div className="loading-line" /> : null}
+            <div className="gift-card-tabs" role="tablist" aria-label={tr(t, 'giftCardType', '礼品卡类型')}>
+              <button
+                type="button"
+                className={activeGiftCardType === 'plan' ? 'gift-card-tab active' : 'gift-card-tab'}
+                onClick={() => changeGiftCardType('plan')}
+              >
+                {tr(t, 'giftCardPlanType', '套餐')}
+                <span>{planGiftCardCount}</span>
+              </button>
+              <button
+                type="button"
+                className={activeGiftCardType === 'credit' ? 'gift-card-tab active' : 'gift-card-tab'}
+                onClick={() => changeGiftCardType('credit')}
+              >
+                {tr(t, 'giftCardCreditType', '余额')}
+                <span>{creditGiftCardCount}</span>
+              </button>
+            </div>
+            <GiftCardRows
+              giftCards={giftCardPage.giftCards}
+              copiedCode={copiedCode}
+              onCopy={copyCode}
+              onRequestRevoke={setRevokeTarget}
+              t={t}
+            />
+            <div className="pagination-bar">
+              <span>{tr(t, 'giftCardTotal', '共 {total} 个礼品码').replace('{total}', String(giftCardPage.total))}</span>
+              <div>
+                <button
+                  type="button"
+                  className="icon-button compact"
+                  onClick={() => setGiftCardPageNumber((value) => value - 1)}
+                  disabled={giftCardPageNumber <= 1}
+                  title={t.previousPage}
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <strong>
+                  {giftCardPageNumber} / {pageCount}
+                </strong>
+                <button
+                  type="button"
+                  className="icon-button compact"
+                  onClick={() => setGiftCardPageNumber((value) => value + 1)}
+                  disabled={giftCardPageNumber >= pageCount}
+                  title={t.nextPage}
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </section>
+      <TaobaoAutomationPanel headers={headers} plans={eligiblePlans} t={t} />
+
+      {isCreateOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <form className="modal-panel gift-card-create-panel" onSubmit={submit}>
+            <div className="section-heading">
+              <div>
+                <h2>{tr(t, 'createGiftCard', '生成礼品码')}</h2>
+                <p>{formType === 'plan' ? tr(t, 'giftCardPlanType', '套餐') : tr(t, 'giftCardCreditType', '余额')}</p>
+              </div>
+            </div>
+            <label>
+              {tr(t, 'giftCardType', '礼品卡类型')}
+              <div className="agent-options gift-card-type-options" role="radiogroup" aria-label={tr(t, 'giftCardType', '礼品卡类型')}>
+                <button
+                  type="button"
+                  className={formType === 'plan' ? 'agent-option active' : 'agent-option'}
+                  onClick={() => setFormType('plan')}
+                >
+                  {tr(t, 'giftCardPlanType', '套餐')}
+                </button>
+                <button
+                  type="button"
+                  className={formType === 'credit' ? 'agent-option active' : 'agent-option'}
+                  onClick={() => setFormType('credit')}
+                >
+                  {tr(t, 'giftCardCreditType', '余额')}
+                </button>
+              </div>
+            </label>
+            {formType === 'plan' ? (
+              <>
+                <label>
+                  {t.plan}
+                  <select value={planId} onChange={(event) => setPlanId(event.target.value)} required>
+                    {eligiblePlans.map((plan) => (
+                      <option value={plan.itemId} key={plan.itemId}>
+                        {planProductOptionLabel(plan)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  {tr(t, 'giftCardDuration', '有效月份')}
+                  <input
+                    type="number"
+                    min="1"
+                    max="36"
+                    value={durationMonths}
+                    onChange={(event) => setDurationMonths(Number(event.target.value))}
+                    required
+                  />
+                </label>
+              </>
+            ) : (
+              <label>
+                {tr(t, 'giftCardAmount', '余额金额')}
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={amountYuan}
+                  onChange={(event) => setAmountYuan(event.target.value)}
+                  required
+                />
+              </label>
+            )}
+            <div className="gift-card-form-grid">
+              <label>
+                {tr(t, 'giftCardQuantity', '生成数量')}
+                <input
+                  type="number"
+                  min="1"
+                  max="200"
+                  value={quantity}
+                  onChange={(event) => setQuantity(Number(event.target.value))}
+                  required
+                />
+              </label>
+              <label>
+                {tr(t, 'giftCardPrefix', '卡密前缀')}
+                <input value={prefix} onChange={(event) => setPrefix(event.target.value)} placeholder="RH" />
+              </label>
+            </div>
+            {generatedCards.length ? (
+              <div className="generated-gift-cards">
+                <div className="generated-gift-cards-head">
+                  <strong>{tr(t, 'generatedGiftCards', '本次生成')}</strong>
+                  <button type="button" className="secondary-button" onClick={copyGeneratedCodes}>
+                    {copiedCode === '__generated__' ? <Check size={15} /> : <Copy size={15} />}
+                    {t.copy}
+                  </button>
+                </div>
+                <div className="generated-code-list">
+                  {generatedCards.map((card) => (
+                    <code key={card.code}>{card.code}</code>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            <div className="modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setIsCreateOpen(false)}>
+                {t.cancel}
+              </button>
+              <button type="submit" className="primary-button" disabled={formType === 'plan' && !eligiblePlans.length}>
+                <Gift size={16} />
+                {tr(t, 'createGiftCard', '生成礼品码')}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+      {revokeTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel">
+            <div className="section-heading">
+              <div>
+                <h2>{tr(t, 'revokeGiftCard', '撤销兑换码')}</h2>
+                <p>{revokeTarget.code}</p>
+              </div>
+            </div>
+            <p className="modal-copy">{tr(t, 'revokeGiftCardConfirm', '确认撤销这个未使用的兑换码？撤销后用户将无法兑换。')}</p>
+            <div className="modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setRevokeTarget(null)} disabled={isRevoking}>
+                {t.cancel}
+              </button>
+              <button type="button" className="danger-button" onClick={() => revokeGiftCard(revokeTarget)} disabled={isRevoking}>
+                <Ban size={16} />
+                {tr(t, 'revokeGiftCard', '撤销兑换码')}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function GiftCardRows({
+  giftCards,
+  copiedCode,
+  onCopy,
+  onRequestRevoke,
+  t
+}: {
+  giftCards: AdminGiftCard[];
+  copiedCode: string;
+  onCopy: (code: string) => Promise<void>;
+  onRequestRevoke: (card: AdminGiftCard) => void;
+  t: Record<string, string>;
+}) {
+  if (!giftCards.length) return <Empty t={t} />;
+
+  return (
+    <div className="gift-card-table">
+      <div className="gift-card-table-head">
+        <span>{t.keyValue}</span>
+        <span>{tr(t, 'giftCardType', '礼品卡类型')}</span>
+        <span>{t.plan}</span>
+        <span>{tr(t, 'giftCardAmount', '余额金额')}</span>
+        <span>{t.status}</span>
+        <span>{tr(t, 'createdBy', '创建人')}</span>
+        <span>{tr(t, 'redeemedBy', '使用人')}</span>
+        <span>{t.createdAt}</span>
+        <span>{t.action}</span>
+      </div>
+      {giftCards.map((card) => (
+        <article className="gift-card-row" key={card.code}>
+          <div className="key-secret-cell">
+            <code>{card.code}</code>
+            <button type="button" className="icon-button compact" onClick={() => onCopy(card.code)} title={t.copy}>
+              {copiedCode === card.code ? <Check size={15} /> : <Copy size={15} />}
+            </button>
+          </div>
+          <span>{card.type === 'plan' ? tr(t, 'giftCardPlanType', '套餐') : tr(t, 'giftCardCreditType', '余额')}</span>
+          <div className="gift-card-plan-cell">
+            <strong>{card.planName || '-'}</strong>
+            {card.type === 'plan' ? (
+              <small>
+                {card.durationMonths} {tr(t, 'giftCardDuration', '有效月份')} · {currency(card.fiveHourTokenLimit, 'USD')} / 5h
+              </small>
+            ) : null}
+          </div>
+          <span>{card.type === 'credit' ? currency(card.amountCents, 'CNY') : '-'}</span>
+          <div className="gift-card-status-cell">
+            <span className={card.revokedAt ? 'status-pill danger' : card.redeemedAt ? 'status-pill warn' : 'status-pill'}>
+              {card.revokedAt ? tr(t, 'revoked', '已撤销') : card.redeemedAt ? tr(t, 'redeemed', '已兑换') : tr(t, 'unredeemed', '未兑换')}
+            </span>
+            {card.revokedAt ? (
+              <small>
+                {tr(t, 'revokedBy', '撤销人')}: {card.revokedByEmail || card.revokedByUserId || '-'}
+              </small>
+            ) : null}
+          </div>
+          <span>{card.createdByEmail || card.createdByUserId || '-'}</span>
+          <span>{card.redeemedByEmail || card.redeemedByUserId || '-'}</span>
+          <span>{card.createdAt ? fullDate(card.createdAt) : '-'}</span>
+          <div className="row-actions">
+            <button type="button" className="icon-button compact" onClick={() => onCopy(card.code)} title={t.copy} aria-label={t.copy}>
+              {copiedCode === card.code ? <Check size={15} /> : <Copy size={15} />}
+            </button>
+            {!card.redeemedAt && !card.revokedAt ? (
+              <button
+                type="button"
+                className="icon-button danger compact"
+                onClick={() => onRequestRevoke(card)}
+                title={tr(t, 'revokeGiftCard', '撤销兑换码')}
+                aria-label={tr(t, 'revokeGiftCard', '撤销兑换码')}
+              >
+                <Ban size={15} />
+              </button>
+            ) : null}
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function TaobaoAutomationPanel({ headers, plans, t }: { headers: HeadersInit; plans: PlanProductOption[]; t: Record<string, string> }) {
+  const [shops, setShops] = React.useState<TaobaoShop[]>([]);
+  const [mappings, setMappings] = React.useState<TaobaoProductMapping[]>([]);
+  const [orders, setOrders] = React.useState<PlatformOrder[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [isExpanded, setIsExpanded] = React.useState(true);
+  const [shopId, setShopId] = React.useState('');
+  const [shopNick, setShopNick] = React.useState('');
+  const [sessionKey, setSessionKey] = React.useState('');
+  const [sessionExpiresAt, setSessionExpiresAt] = React.useState('');
+  const [permitShopId, setPermitShopId] = React.useState('');
+  const taobaoProducts = React.useMemo<PurchaseProductOption[]>(() => [...plans, ...creditProductOptions()], [plans]);
+  const [selectedProductKey, setSelectedProductKey] = React.useState(() => {
+    const first = plans[0] || creditProductOptions()[0];
+    return first ? `${first.itemType}:${first.itemId}` : '';
+  });
+  const [giftType, setGiftType] = React.useState<GiftCardFormType>('plan');
+  const [numIid, setNumIid] = React.useState('');
+  const [skuId, setSkuId] = React.useState('');
+  const [title, setTitle] = React.useState('');
+  const [planId, setPlanId] = React.useState(plans[0]?.itemId || '');
+  const [amountYuan, setAmountYuan] = React.useState('100');
+  const [durationMonths, setDurationMonths] = React.useState(1);
+  const [quantity, setQuantity] = React.useState(1);
+
+  React.useEffect(() => {
+    if (!planId && plans[0]?.itemId) setPlanId(plans[0].itemId);
+  }, [planId, plans]);
+
+  const selectedProduct = taobaoProducts.find((product) => `${product.itemType}:${product.itemId}` === selectedProductKey) || taobaoProducts[0];
+
+  React.useEffect(() => {
+    if (!selectedProduct && taobaoProducts[0]) {
+      setSelectedProductKey(`${taobaoProducts[0].itemType}:${taobaoProducts[0].itemId}`);
+      return;
+    }
+    if (!selectedProduct) return;
+    setGiftType(selectedProduct.itemType);
+    if (selectedProduct.itemType === 'plan') {
+      setPlanId(selectedProduct.itemId);
+    } else {
+      setAmountYuan(selectedProduct.itemId);
+    }
+    setTitle((current) => current || selectedProduct.name);
+  }, [selectedProduct, taobaoProducts]);
+
+  function selectTaobaoProduct(product: PurchaseProductOption) {
+    setSelectedProductKey(`${product.itemType}:${product.itemId}`);
+    setGiftType(product.itemType);
+    setTitle(product.name);
+    if (product.itemType === 'plan') {
+      setPlanId(product.itemId);
+    } else {
+      setAmountYuan(product.itemId);
+    }
+  }
+
+  function mappingProductLabel(mapping: TaobaoProductMapping) {
+    if (mapping.giftType === 'plan') {
+      const option = plans.find((plan) => plan.itemId === mapping.planId);
+      return option ? option.name : mapping.planId || '-';
+    }
+    return currency(mapping.amountCents, 'CNY');
+  }
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const [shopRes, mappingRes, orderRes] = await Promise.all([
+        fetch('/api/taobao/shops', { headers }),
+        fetch('/api/taobao/product-mappings', { headers }),
+        fetch('/api/taobao/orders?limit=50', { headers })
+      ]);
+      const shopPayload = await readJsonResponse(shopRes);
+      const mappingPayload = await readJsonResponse(mappingRes);
+      const orderPayload = await readJsonResponse(orderRes);
+      if (!shopRes.ok) throw new Error(responseErrorMessage(shopRes, shopPayload, t.requestFailed));
+      if (!mappingRes.ok) throw new Error(responseErrorMessage(mappingRes, mappingPayload, t.requestFailed));
+      if (!orderRes.ok) throw new Error(responseErrorMessage(orderRes, orderPayload, t.requestFailed));
+      const nextShops = (shopPayload as { shops: TaobaoShop[] }).shops || [];
+      setShops(nextShops);
+      setPermitShopId((current) => current || nextShops[0]?.id || '');
+      setMappings((mappingPayload as { mappings: TaobaoProductMapping[] }).mappings || []);
+      setOrders((orderPayload as { orders: PlatformOrder[] }).orders || []);
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setLoading(false);
+    }
+  }, [headers, t.requestFailed]);
+
+  React.useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function saveShop(event: React.FormEvent) {
+    event.preventDefault();
+    try {
+      const response = await fetch('/api/taobao/shops', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          id: shopId,
+          nick: shopNick,
+          sessionKey,
+          sessionExpiresAt: sessionExpiresAt || null
+        })
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      const nextShops = (payload as { shops: TaobaoShop[] }).shops || [];
+      setShops(nextShops);
+      setPermitShopId(shopId || nextShops[0]?.id || '');
+      setShopId('');
+      setShopNick('');
+      setSessionKey('');
+      setSessionExpiresAt('');
+      showSuccessToast(tr(t, 'taobaoShopSaved', '淘宝店铺授权已保存。'));
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    }
+  }
+
+  async function permitMessages(targetShopId = permitShopId) {
+    if (!targetShopId) return;
+    try {
+      const response = await fetch(`/api/taobao/shops/${encodeURIComponent(targetShopId)}/permit`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({})
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setShops((payload as { shops: TaobaoShop[] }).shops || []);
+      showSuccessToast(tr(t, 'taobaoPermitSaved', '淘宝 TMC 消息服务已开通。'));
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    }
+  }
+
+  async function saveMapping(event: React.FormEvent) {
+    event.preventDefault();
+    const body =
+      giftType === 'credit'
+        ? {
+            numIid,
+            skuId: skuId || null,
+            title,
+            giftType: 'credit',
+            amountCents: Math.max(1, Math.round(Number(amountYuan || 0) * 100)),
+            quantity,
+            isActive: true
+          }
+        : {
+            numIid,
+            skuId: skuId || null,
+            title,
+            giftType: 'plan',
+            planId,
+            durationMonths,
+            quantity,
+            isActive: true
+          };
+    try {
+      const response = await fetch('/api/taobao/product-mappings', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setMappings((payload as { mappings: TaobaoProductMapping[] }).mappings || []);
+      setNumIid('');
+      setSkuId('');
+      setTitle('');
+      showSuccessToast(tr(t, 'taobaoMappingSaved', '淘宝商品映射已保存。'));
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    }
+  }
+
+  async function deleteMapping(mapping: TaobaoProductMapping) {
+    try {
+      const response = await fetch(`/api/taobao/product-mappings/${mapping.id}`, { method: 'DELETE', headers });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setMappings((payload as { mappings: TaobaoProductMapping[] }).mappings || []);
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    }
+  }
+
+  return (
+    <section className="table-panel taobao-automation-panel collapsible-panel">
+      <div className="section-heading">
+        <div>
+          <div className="channel-title-row">
+            <button
+              type="button"
+              className="channel-toggle-button"
+              onClick={() => setIsExpanded((value) => !value)}
+              aria-expanded={isExpanded}
+              title={isExpanded ? t.collapse : t.expand}
+            >
+              <ChevronDown size={16} className={isExpanded ? 'rotate-icon open' : 'rotate-icon'} />
+            </button>
+            <h2>{tr(t, 'taobaoAutomation', '淘宝自动发码')}</h2>
+          </div>
+          <p>{tr(t, 'taobaoAutomationHint', 'TMC 消息触发后按商品/SKU 映射自动生成兑换码，买家登录后可到「我的订单」自助领取。')}</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={() => void load()}>
+          <RefreshCcw size={16} />
+          {t.refresh}
+        </button>
+      </div>
+      {isExpanded ? (
+        <div className="collapsible-panel-body">
+          {loading ? <div className="loading-line" /> : null}
+          <div className="taobao-split-grid">
+            <form className="taobao-mapping-form taobao-shop-form" onSubmit={saveShop}>
+              <label>
+                店铺 ID
+                <input value={shopId} onChange={(event) => setShopId(event.target.value)} required />
+              </label>
+              <label>
+                店铺昵称
+                <input value={shopNick} onChange={(event) => setShopNick(event.target.value)} placeholder={tr(t, 'optional', '可选')} />
+              </label>
+              <label>
+                Session Key
+                <input value={sessionKey} onChange={(event) => setSessionKey(event.target.value)} required />
+              </label>
+              <label>
+                过期时间
+                <input type="datetime-local" value={sessionExpiresAt} onChange={(event) => setSessionExpiresAt(event.target.value)} />
+              </label>
+              <button type="submit" className="primary-button">
+                <KeyRound size={16} />
+                保存授权
+              </button>
+            </form>
+
+            <div className="taobao-permit-panel">
+              <div>
+                <h3>{tr(t, 'taobaoShopPermit', '店铺消息服务')}</h3>
+                <p>{tr(t, 'taobaoShopPermitHint', '保存店铺 Session 后开通 TMC，淘宝付款消息会触发自动生成兑换码。')}</p>
+              </div>
+              <div className="taobao-permit-row">
+                <select value={permitShopId} onChange={(event) => setPermitShopId(event.target.value)}>
+                  <option value="">{tr(t, 'selectShop', '选择店铺')}</option>
+                  {shops.map((shop) => (
+                    <option value={shop.id} key={shop.id}>
+                      {shop.nick || shop.id}
+                    </option>
+                  ))}
+                </select>
+                <button type="button" className="secondary-button" disabled={!permitShopId} onClick={() => void permitMessages()}>
+                  <ShieldCheck size={16} />
+                  开通 TMC
+                </button>
+              </div>
+            </div>
+          </div>
+          <form className="taobao-mapping-form" onSubmit={saveMapping}>
+            <div className="taobao-product-picker">
+              <span>{tr(t, 'purchaseProductTitle', '选择商品')}</span>
+              <div className="taobao-product-grid">
+                {taobaoProducts.map((product) => {
+                  const productKey = `${product.itemType}:${product.itemId}`;
+                  return (
+                    <button
+                      type="button"
+                      className={selectedProductKey === productKey ? 'taobao-product-card active' : 'taobao-product-card'}
+                      key={productKey}
+                      onClick={() => selectTaobaoProduct(product)}
+                    >
+                      <strong>{product.name}</strong>
+                      <span>{product.itemType === 'plan' ? tr(t, 'giftCardPlanType', '套餐') : tr(t, 'giftCardCreditType', '余额')}</span>
+                      <small>{product.description || product.priceLabel}</small>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <label>
+              淘宝商品 ID
+              <input value={numIid} onChange={(event) => setNumIid(event.target.value)} required />
+            </label>
+            <label>
+              SKU ID
+              <input value={skuId} onChange={(event) => setSkuId(event.target.value)} placeholder={tr(t, 'optional', '可选')} />
+            </label>
+            <label>
+              {t.description}
+              <input value={title} onChange={(event) => setTitle(event.target.value)} />
+            </label>
+            <label>
+              {tr(t, 'giftCardType', '礼品卡类型')}
+              <select value={giftType} onChange={(event) => setGiftType(event.target.value as GiftCardFormType)}>
+                <option value="plan">{tr(t, 'giftCardPlanType', '套餐')}</option>
+                <option value="credit">{tr(t, 'giftCardCreditType', '余额')}</option>
+              </select>
+            </label>
+            {giftType === 'plan' ? (
+              <>
+                <label>
+                  {t.plan}
+                  <select value={planId} onChange={(event) => setPlanId(event.target.value)} required>
+                    {plans.map((plan) => (
+                      <option value={plan.itemId} key={plan.itemId}>
+                        {planProductOptionLabel(plan)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  {tr(t, 'giftCardDuration', '有效月份')}
+                  <input type="number" min="1" max="36" value={durationMonths} onChange={(event) => setDurationMonths(Number(event.target.value))} />
+                </label>
+              </>
+            ) : (
+              <label>
+                {tr(t, 'giftCardAmount', '余额金额')}
+                <input type="number" min="0.01" step="0.01" value={amountYuan} onChange={(event) => setAmountYuan(event.target.value)} />
+              </label>
+            )}
+            <label>
+              {tr(t, 'giftCardQuantity', '生成数量')}
+              <input type="number" min="1" max="20" value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />
+            </label>
+            <button type="submit" className="primary-button">
+              <Plus size={16} />
+              {tr(t, 'saveMapping', '保存映射')}
+            </button>
+          </form>
+
+          <div className="taobao-split-grid">
+            <div>
+              <h3>{tr(t, 'taobaoShops', '已授权店铺')}</h3>
+              <div className="taobao-mini-list">
+                {shops.length ? shops.map((shop) => (
+                  <article className="taobao-mini-row taobao-shop-row" key={shop.id}>
+                    <div>
+                      <strong>{shop.nick || shop.id}</strong>
+                      <span>{shop.id}</span>
+                    </div>
+                    <span>{shop.sessionExpiresAt ? fullDate(shop.sessionExpiresAt) : '-'}</span>
+                    <span className={shop.messagePermittedAt ? 'status-code ok' : 'status-code error'}>
+                      {shop.messagePermittedAt ? 'TMC' : '未开通'}
+                    </span>
+                    <button type="button" className="secondary-button" onClick={() => void permitMessages(shop.id)}>
+                      <ShieldCheck size={15} />
+                      TMC
+                    </button>
+                  </article>
+                )) : <Empty t={t} />}
+              </div>
+            </div>
+            <div>
+              <h3>{tr(t, 'taobaoMappings', '商品映射')}</h3>
+              <div className="taobao-mini-list">
+                {mappings.length ? mappings.map((mapping) => (
+                  <article className="taobao-mini-row" key={mapping.id}>
+                    <div>
+                      <strong>{mapping.title || mappingProductLabel(mapping)}</strong>
+                      <span>淘宝商品 {mapping.numIid}{mapping.skuId ? ` / SKU ${mapping.skuId}` : ''}</span>
+                    </div>
+                    <span>{mappingProductLabel(mapping)}</span>
+                    <button type="button" className="icon-button danger" onClick={() => deleteMapping(mapping)} title={t.delete}>
+                      <Trash2 size={15} />
+                    </button>
+                  </article>
+                )) : <Empty t={t} />}
+              </div>
+            </div>
+          </div>
+
+          <div className="taobao-split-grid">
+            <div>
+              <h3>{tr(t, 'taobaoRecentOrders', '最近订单')}</h3>
+              <div className="taobao-mini-list">
+                {orders.length ? orders.map((order) => (
+                  <article className="taobao-mini-row" key={order.id}>
+                    <div>
+                      <strong>{order.orderId}</strong>
+                      <span>{order.title || order.itemId}</span>
+                    </div>
+                    <span className={order.deliveryStatus === 'ready' || order.deliveryStatus === 'claimed' ? 'status-code ok' : 'status-code error'}>
+                      {order.deliveryStatus}
+                    </span>
+                    <code>{order.giftCardCode || '-'}</code>
+                  </article>
+                )) : <Empty t={t} />}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ProductLinksPanel({
+  headers,
+  initialProductLinks,
+  t
+}: {
+  headers: HeadersInit;
+  initialProductLinks: ProductLink[];
+  t: Record<string, string>;
+}) {
+  const productRows = React.useMemo(() => [...planProductOptions(), ...creditProductOptions()], []);
+  const [formLinks, setFormLinks] = React.useState<Record<string, string>>(() =>
+    buildProductLinkForm(productRows, initialProductLinks)
+  );
+  const [loading, setLoading] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    setFormLinks(buildProductLinkForm(productRows, initialProductLinks));
+  }, [initialProductLinks, productRows]);
+
+  const loadProductLinks = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetch('/api/product-links', { headers });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      const nextLinks = (payload as { productLinks: ProductLink[] }).productLinks || [];
+      setFormLinks(buildProductLinkForm(productRows, nextLinks));
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setLoading(false);
+    }
+  }, [headers, productRows, t.requestFailed]);
+
+  React.useEffect(() => {
+    void loadProductLinks();
+  }, [loadProductLinks]);
+
+  function updateUrl(option: PurchaseProductOption, channel: PurchaseChannelId, value: string) {
+    setFormLinks((current) => ({
+      ...current,
+      [productLinkFormKey(option.itemType, option.itemId, channel)]: value
+    }));
+  }
+
+  async function saveProductLinks(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    const body = {
+      productLinks: productRows.flatMap((option) =>
+        purchaseChannels.map((channel) => ({
+          itemType: option.itemType,
+          itemId: option.itemId,
+          channel: channel.id,
+          url: formLinks[productLinkFormKey(option.itemType, option.itemId, channel.id)] || defaultPurchaseLinks[channel.id]
+        }))
+      )
+    };
+
+    try {
+      const response = await fetch('/api/product-links', {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify(body)
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      const nextLinks = (payload as { productLinks: ProductLink[] }).productLinks || [];
+      setFormLinks(buildProductLinkForm(productRows, nextLinks));
+      showSuccessToast(tr(t, 'productLinksSaved', '商品链接已保存。'));
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="content-grid">
+      <form className="table-panel product-links-panel" onSubmit={saveProductLinks}>
+        <div className="section-heading">
+          <div>
+            <h2>{tr(t, 'productManagement', '商品管理')}</h2>
+            <p>{tr(t, 'productManagementHint', '维护套餐和额度在淘宝、闲鱼的商品链接。')}</p>
+          </div>
+          <button type="submit" className="primary-button" disabled={saving}>
+            <ShoppingBag size={17} />
+            {tr(t, 'saveProducts', '保存商品链接')}
+          </button>
+        </div>
+        {loading ? <div className="loading-line" /> : null}
+        <div className="product-link-list">
+          {productRows.map((option) => (
+            <article className="product-link-card" key={`${option.itemType}-${option.itemId}`}>
+              <div className="product-link-title">
+                <span>{option.itemType === 'plan' ? tr(t, 'purchasePlanTitle', '套餐') : tr(t, 'purchaseCreditTitle', '额度')}</span>
+                <strong>{option.name}</strong>
+                <small>{option.priceLabel}</small>
+              </div>
+              <div className="product-link-url-grid">
+                {purchaseChannels.map((channel) => (
+                  <label key={channel.id}>
+                    {t[channel.labelKey]}
+                    <input
+                      type="url"
+                      value={formLinks[productLinkFormKey(option.itemType, option.itemId, channel.id)] || ''}
+                      onChange={(event) => updateUrl(option, channel.id, event.target.value)}
+                      placeholder={defaultPurchaseLinks[channel.id]}
+                      required
+                    />
+                  </label>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function productLinkFormKey(itemType: ProductItemType, itemId: string, channel: PurchaseChannelId) {
+  return `${itemType}:${itemId}:${channel}`;
+}
+
+function buildProductLinkForm(productRows: PurchaseProductOption[], productLinks: ProductLink[]) {
+  return productRows.reduce<Record<string, string>>((form, option) => {
+    purchaseChannels.forEach((channel) => {
+      form[productLinkFormKey(option.itemType, option.itemId, channel.id)] = productLinkUrl(
+        productLinks,
+        option.itemType,
+        option.itemId,
+        channel.id
+      );
+    });
+    return form;
+  }, {});
+}
+
+const emptyChannelForm = {
+  id: '',
+  name: '',
+  status: 'active' as UpstreamChannel['status'],
+  claudeApiUrl: '',
+  codexApiUrl: '',
+  useIndependentAgentKeys: false,
+  inputRatePerMillion: 3,
+  outputRatePerMillion: 15,
+  cacheCreationRatePerMillion: 3.75,
+  cacheReadRatePerMillion: 0.3,
+  serverErrorRecoveryMinutes: 10,
+  displayUsageMultiplier: 2,
+  sortOrder: 100
+};
+
+function channelToForm(channel: UpstreamChannel) {
+  return {
+    id: channel.id,
+    name: channel.name,
+    status: channel.status,
+    claudeApiUrl: channel.claudeApiUrl,
+    codexApiUrl: channel.codexApiUrl,
+    useIndependentAgentKeys: channel.useIndependentAgentKeys,
+    inputRatePerMillion: channel.inputRatePerMillion,
+    outputRatePerMillion: channel.outputRatePerMillion,
+    cacheCreationRatePerMillion: channel.cacheCreationRatePerMillion,
+    cacheReadRatePerMillion: channel.cacheReadRatePerMillion,
+    serverErrorRecoveryMinutes: channel.serverErrorRecoveryMinutes,
+    displayUsageMultiplier: channel.displayUsageMultiplier,
+    sortOrder: channel.sortOrder
+  };
+}
+
+function dateTimeLocalValue(value: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const offsetMs = date.getTimezoneOffset() * 60 * 1000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 19);
+}
+
+function dateTimeLocalToIso(value: string) {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  return Number.isNaN(timestamp) ? null : new Date(timestamp).toISOString();
+}
+
+function displayDateTime(value: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const pad = (input: number) => String(input).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function isPastDate(value: string | null) {
+  if (!value) return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp <= Date.now();
+}
+
+type UpstreamKeyDeleteTarget = {
+  channel: UpstreamChannel;
+  key: UpstreamChannelKey;
+};
+
+type UpstreamKeyEditTarget = {
+  channel: UpstreamChannel;
+  key: UpstreamChannelKey;
+};
+
+type UpstreamModelRateTarget = {
+  channel: UpstreamChannel;
+  rate?: UpstreamModelRate;
+};
+
+const emptyModelRateForm = {
+  agentType: 'claude-code' as GuideAgentId,
+  model: '',
+  inputRatePerMillion: 0,
+  outputRatePerMillion: 0,
+  cacheCreationRatePerMillion: 0,
+  cacheReadRatePerMillion: 0,
+  isDefault: false,
+  sortOrder: 100
+};
+
+function modelRateToForm(rate: UpstreamModelRate) {
+  return {
+    agentType: rate.agentType,
+    model: rate.model,
+    inputRatePerMillion: rate.inputRatePerMillion,
+    outputRatePerMillion: rate.outputRatePerMillion,
+    cacheCreationRatePerMillion: rate.cacheCreationRatePerMillion,
+    cacheReadRatePerMillion: rate.cacheReadRatePerMillion,
+    isDefault: rate.isDefault,
+    sortOrder: rate.sortOrder
+  };
+}
+
+function ChannelsPanel({ headers, t }: { headers: HeadersInit; t: Record<string, string> }) {
+  const [channels, setChannels] = React.useState<UpstreamChannel[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [isChannelOpen, setIsChannelOpen] = React.useState(false);
+  const [channelForm, setChannelForm] = React.useState(emptyChannelForm);
+  const [expandedChannelIds, setExpandedChannelIds] = React.useState<Set<string>>(() => new Set());
+  const [keyTarget, setKeyTarget] = React.useState<UpstreamChannel | null>(null);
+  const [keyName, setKeyName] = React.useState('');
+  const [keyValue, setKeyValue] = React.useState('');
+  const [keyAgentType, setKeyAgentType] = React.useState<UpstreamKeyAgentType>('shared');
+  const [keyExpiresAt, setKeyExpiresAt] = React.useState('');
+  const [keyIsPermanent, setKeyIsPermanent] = React.useState(true);
+  const [keyEditTarget, setKeyEditTarget] = React.useState<UpstreamKeyEditTarget | null>(null);
+  const [keyEditName, setKeyEditName] = React.useState('');
+  const [keyEditValue, setKeyEditValue] = React.useState('');
+  const [keyEditExpiresAt, setKeyEditExpiresAt] = React.useState('');
+  const [keyEditIsPermanent, setKeyEditIsPermanent] = React.useState(true);
+  const [modelRateTarget, setModelRateTarget] = React.useState<UpstreamModelRateTarget | null>(null);
+  const [modelRateForm, setModelRateForm] = React.useState(emptyModelRateForm);
+  const [deleteTarget, setDeleteTarget] = React.useState<UpstreamChannel | null>(null);
+  const [keyDeleteTarget, setKeyDeleteTarget] = React.useState<UpstreamKeyDeleteTarget | null>(null);
+
+  const loadChannels = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetch('/api/upstream-channels', { headers });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setChannels((payload as { channels: UpstreamChannel[] }).channels || []);
+      setExpandedChannelIds((current) => new Set([...current].filter((id) => ((payload as { channels: UpstreamChannel[] }).channels || []).some((channel) => channel.id === id))));
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setLoading(false);
+    }
+  }, [headers, t.requestFailed]);
+
+  React.useEffect(() => {
+    void loadChannels();
+  }, [loadChannels]);
+
+  function openCreate() {
+    setChannelForm(emptyChannelForm);
+    setIsChannelOpen(true);
+  }
+
+  function openEdit(channel: UpstreamChannel) {
+    setChannelForm(channelToForm(channel));
+    setIsChannelOpen(true);
+  }
+
+  async function saveChannel(event: React.FormEvent) {
+    event.preventDefault();
+    const isEdit = Boolean(channelForm.id);
+    const body = {
+      name: channelForm.name,
+      status: channelForm.status,
+      claudeApiUrl: channelForm.claudeApiUrl,
+      codexApiUrl: channelForm.codexApiUrl,
+      useIndependentAgentKeys: channelForm.useIndependentAgentKeys,
+      inputRatePerMillion: channelForm.inputRatePerMillion,
+      outputRatePerMillion: channelForm.outputRatePerMillion,
+      cacheCreationRatePerMillion: channelForm.cacheCreationRatePerMillion,
+      cacheReadRatePerMillion: channelForm.cacheReadRatePerMillion,
+      serverErrorRecoveryMinutes: channelForm.serverErrorRecoveryMinutes,
+      displayUsageMultiplier: Number(channelForm.displayUsageMultiplier.toFixed(2)),
+      sortOrder: channelForm.sortOrder
+    };
+
+    try {
+      const response = await fetch(isEdit ? `/api/upstream-channels/${channelForm.id}` : '/api/upstream-channels', {
+        method: isEdit ? 'PATCH' : 'POST',
+        headers,
+        body: JSON.stringify(body)
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setChannels((payload as { channels: UpstreamChannel[] }).channels || []);
+      setIsChannelOpen(false);
+      showSuccessToast(tr(t, 'channelSaved', '渠道已保存。'));
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    }
+  }
+
+  async function deleteChannel(channel: UpstreamChannel) {
+    try {
+      const response = await fetch(`/api/upstream-channels/${channel.id}`, { method: 'DELETE', headers });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setChannels((payload as { channels: UpstreamChannel[] }).channels || []);
+      setDeleteTarget(null);
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    }
+  }
+
+  async function saveKey(event: React.FormEvent) {
+    event.preventDefault();
+    if (!keyTarget) return;
+    try {
+      const response = await fetch(`/api/upstream-channels/${keyTarget.id}/keys`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: keyName,
+          key: keyValue,
+          agentType: keyAgentType,
+          expiresAt: keyIsPermanent ? null : dateTimeLocalToIso(keyExpiresAt)
+        })
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setChannels((payload as { channels: UpstreamChannel[] }).channels || []);
+      setKeyTarget(null);
+      setKeyName('');
+      setKeyValue('');
+      setKeyAgentType('shared');
+      setKeyExpiresAt('');
+      setKeyIsPermanent(true);
+      showSuccessToast(tr(t, 'upstreamKeySaved', '上游 Key 已保存。'));
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    }
+  }
+
+  function openEditKey(channel: UpstreamChannel, key: UpstreamChannelKey) {
+    setKeyEditTarget({ channel, key });
+    setKeyEditName(key.name || '');
+    setKeyEditValue('');
+    setKeyEditIsPermanent(!key.expiresAt);
+    setKeyEditExpiresAt(dateTimeLocalValue(key.expiresAt));
+  }
+
+  async function saveEditedKey(event: React.FormEvent) {
+    event.preventDefault();
+    if (!keyEditTarget) return;
+
+    const body: {
+      name: string;
+      key?: string;
+      expiresAt: string | null;
+    } = {
+      name: keyEditName,
+      expiresAt: keyEditIsPermanent ? null : dateTimeLocalToIso(keyEditExpiresAt)
+    };
+    if (keyEditValue.trim()) {
+      body.key = keyEditValue.trim();
+    }
+
+    try {
+      const response = await fetch(`/api/upstream-channels/${keyEditTarget.channel.id}/keys/${keyEditTarget.key.id}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify(body)
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setChannels((payload as { channels: UpstreamChannel[] }).channels || []);
+      setKeyEditTarget(null);
+      setKeyEditName('');
+      setKeyEditValue('');
+      setKeyEditExpiresAt('');
+      setKeyEditIsPermanent(true);
+      showSuccessToast(tr(t, 'upstreamKeySaved', '上游 Key 已保存。'));
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    }
+  }
+
+  async function updateKeyStatus(channel: UpstreamChannel, key: UpstreamChannelKey, status: UpstreamChannelKey['status']) {
+    try {
+      const response = await fetch(`/api/upstream-channels/${channel.id}/keys/${key.id}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ status })
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setChannels((payload as { channels: UpstreamChannel[] }).channels || []);
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    }
+  }
+
+  function openModelRate(channel: UpstreamChannel, rate?: UpstreamModelRate) {
+    setModelRateTarget({ channel, rate });
+    setModelRateForm(rate ? modelRateToForm(rate) : { ...emptyModelRateForm });
+  }
+
+  async function saveModelRate(event: React.FormEvent) {
+    event.preventDefault();
+    if (!modelRateTarget) return;
+    const isEdit = Boolean(modelRateTarget.rate);
+    try {
+      const response = await fetch(
+        isEdit
+          ? `/api/upstream-channels/${modelRateTarget.channel.id}/model-rates/${modelRateTarget.rate!.id}`
+          : `/api/upstream-channels/${modelRateTarget.channel.id}/model-rates`,
+        {
+          method: isEdit ? 'PATCH' : 'POST',
+          headers,
+          body: JSON.stringify(modelRateForm)
+        }
+      );
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setChannels((payload as { channels: UpstreamChannel[] }).channels || []);
+      setModelRateTarget(null);
+      setModelRateForm(emptyModelRateForm);
+      showSuccessToast(tr(t, 'modelRateSaved', '模型计费已保存。'));
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    }
+  }
+
+  async function deleteModelRate(channel: UpstreamChannel, rate: UpstreamModelRate) {
+    try {
+      const response = await fetch(`/api/upstream-channels/${channel.id}/model-rates/${rate.id}`, { method: 'DELETE', headers });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setChannels((payload as { channels: UpstreamChannel[] }).channels || []);
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    }
+  }
+
+  async function deleteKey(channel: UpstreamChannel, key: UpstreamChannelKey) {
+    try {
+      const response = await fetch(`/api/upstream-channels/${channel.id}/keys/${key.id}`, { method: 'DELETE', headers });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setChannels((payload as { channels: UpstreamChannel[] }).channels || []);
+      setKeyDeleteTarget(null);
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    }
+  }
+
+  function toggleChannel(channelId: string) {
+    setExpandedChannelIds((current) => {
+      const next = new Set(current);
+      if (next.has(channelId)) {
+        next.delete(channelId);
+      } else {
+        next.add(channelId);
+      }
+      return next;
+    });
+  }
+
+  return (
+    <section className="content-grid">
+      <section className="table-panel">
+        <div className="section-heading">
+          <div>
+            <h2>{tr(t, 'channelManagement', '渠道管理')}</h2>
+            <p>{tr(t, 'channelDescription', '配置上游渠道、Agent URL、共享或独立 API Key，以及故障恢复策略。')}</p>
+          </div>
+          <button type="button" className="primary-button" onClick={openCreate}>
+            <Plus size={17} />
+            {tr(t, 'createChannel', '新增渠道')}
+          </button>
+        </div>
+        {loading ? <div className="loading-line" /> : null}
+        {!channels.length ? (
+          <Empty t={t}>
+            <button type="button" className="primary-button" onClick={openCreate}>
+              <Plus size={17} />
+              {tr(t, 'createChannel', '新增渠道')}
+            </button>
+          </Empty>
+        ) : (
+          <div className="channel-list">
+            {channels.map((channel) => (
+              <ChannelCard
+                key={channel.id}
+                channel={channel}
+                t={t}
+                isExpanded={expandedChannelIds.has(channel.id)}
+                onToggle={() => toggleChannel(channel.id)}
+                onEdit={() => openEdit(channel)}
+                onAddKey={() => {
+                  setKeyTarget(channel);
+                  setKeyAgentType(channel.useIndependentAgentKeys ? 'claude-code' : 'shared');
+                  setKeyName('');
+                  setKeyValue('');
+                  setKeyExpiresAt('');
+                  setKeyIsPermanent(true);
+                }}
+                onDelete={() => setDeleteTarget(channel)}
+                onKeyStatus={(key, status) => updateKeyStatus(channel, key, status)}
+                onEditKey={(key) => openEditKey(channel, key)}
+                onDeleteKey={(key) => setKeyDeleteTarget({ channel, key })}
+                onAddModelRate={() => openModelRate(channel)}
+                onEditModelRate={(rate) => openModelRate(channel, rate)}
+                onDeleteModelRate={(rate) => deleteModelRate(channel, rate)}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {isChannelOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <form className="modal-panel channel-modal-panel" onSubmit={saveChannel}>
+            <div className="section-heading">
+              <div>
+                <h2>{channelForm.id ? tr(t, 'editChannel', '编辑渠道') : tr(t, 'createChannel', '新增渠道')}</h2>
+                <p>{tr(t, 'channelModalHint', 'Codex 与 Claude Code 可使用不同 API URL，API Key 可共享或按 Agent 独立维护。')}</p>
+              </div>
+            </div>
+            <div className="channel-form-grid">
+              <label>
+                {tr(t, 'channelName', '渠道名称')}
+                <input
+                  value={channelForm.name}
+                  onChange={(event) => setChannelForm((value) => ({ ...value, name: event.target.value }))}
+                  required
+                  autoFocus
+                />
+              </label>
+              <label>
+                {t.status}
+                <select
+                  value={channelForm.status}
+                  onChange={(event) => setChannelForm((value) => ({ ...value, status: event.target.value as UpstreamChannel['status'] }))}
+                >
+                  <option value="active">{tr(t, 'active', '启用')}</option>
+                  <option value="paused">{t.pause}</option>
+                </select>
+              </label>
+              <label className="wide-field">
+                Claude Code API URL
+                <input
+                  value={channelForm.claudeApiUrl}
+                  onChange={(event) => setChannelForm((value) => ({ ...value, claudeApiUrl: event.target.value }))}
+                  placeholder="https://api-cc.example.com"
+                  required
+                />
+              </label>
+              <label className="wide-field">
+                Codex API URL
+                <input
+                  value={channelForm.codexApiUrl}
+                  onChange={(event) => setChannelForm((value) => ({ ...value, codexApiUrl: event.target.value }))}
+                  placeholder="https://codex.example.com"
+                  required
+                />
+              </label>
+              <label>
+                {tr(t, 'inputRate', '输入单价 / M')}
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={channelForm.inputRatePerMillion}
+                  onChange={(event) => setChannelForm((value) => ({ ...value, inputRatePerMillion: Number(event.target.value) }))}
+                />
+              </label>
+              <label>
+                {tr(t, 'outputRate', '输出单价 / M')}
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={channelForm.outputRatePerMillion}
+                  onChange={(event) => setChannelForm((value) => ({ ...value, outputRatePerMillion: Number(event.target.value) }))}
+                />
+              </label>
+              <label>
+                {tr(t, 'cacheWriteRate', '缓存写入 / M')}
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={channelForm.cacheCreationRatePerMillion}
+                  onChange={(event) =>
+                    setChannelForm((value) => ({ ...value, cacheCreationRatePerMillion: Number(event.target.value) }))
+                  }
+                />
+              </label>
+              <label>
+                {tr(t, 'cacheReadRate', '缓存读取 / M')}
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={channelForm.cacheReadRatePerMillion}
+                  onChange={(event) => setChannelForm((value) => ({ ...value, cacheReadRatePerMillion: Number(event.target.value) }))}
+                />
+              </label>
+              <label>
+                {tr(t, 'serverErrorRecoveryMinutes', '500+ 恢复分钟')}
+                <input
+                  type="number"
+                  min="5"
+                  max="300"
+                  value={channelForm.serverErrorRecoveryMinutes}
+                  onChange={(event) =>
+                    setChannelForm((value) => ({ ...value, serverErrorRecoveryMinutes: Number(event.target.value) }))
+                  }
+                />
+              </label>
+              <label>
+                {tr(t, 'displayUsageMultiplier', '显示用量倍率')}
+                <input
+                  type="number"
+                  min="1"
+                  step="0.01"
+                  value={channelForm.displayUsageMultiplier}
+                  onChange={(event) =>
+                    setChannelForm((value) => ({
+                      ...value,
+                      displayUsageMultiplier: Math.max(1, Math.round(Number(event.target.value || 1) * 100) / 100)
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                {tr(t, 'sortOrder', '排序')}
+                <input
+                  type="number"
+                  value={channelForm.sortOrder}
+                  onChange={(event) => setChannelForm((value) => ({ ...value, sortOrder: Number(event.target.value) }))}
+                />
+              </label>
+            </div>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={channelForm.useIndependentAgentKeys}
+                onChange={(event) => setChannelForm((value) => ({ ...value, useIndependentAgentKeys: event.target.checked }))}
+              />
+              <span>{tr(t, 'useIndependentAgentKeys', 'Claude Code 与 Codex 使用独立 API Key')}</span>
+            </label>
+            <div className="modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setIsChannelOpen(false)}>
+                {t.cancel}
+              </button>
+              <button type="submit" className="primary-button">
+                <Check size={16} />
+                {t.savePlan}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {keyTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <form className="modal-panel" onSubmit={saveKey}>
+            <div className="section-heading">
+              <div>
+                <h2>{tr(t, 'addUpstreamKey', '添加上游 Key')}</h2>
+                <p>{keyTarget.name}</p>
+              </div>
+            </div>
+            <label>
+              {tr(t, 'keyScope', 'Key 作用域')}
+              <select value={keyAgentType} onChange={(event) => setKeyAgentType(event.target.value as UpstreamKeyAgentType)}>
+                <option value="shared" disabled={keyTarget.useIndependentAgentKeys}>
+                  {tr(t, 'sharedKey', '共享')}
+                </option>
+                <option value="claude-code">Claude Code</option>
+                <option value="codex">Codex</option>
+              </select>
+            </label>
+            <label>
+              {tr(t, 'upstreamKeyName', 'Key 名称')}
+              <input value={keyName} onChange={(event) => setKeyName(event.target.value)} autoFocus />
+            </label>
+            <label>
+              API Key
+              <input value={keyValue} onChange={(event) => setKeyValue(event.target.value)} required />
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={keyIsPermanent}
+                onChange={(event) => setKeyIsPermanent(event.target.checked)}
+              />
+              <span>{tr(t, 'permanentKey', '永久有效')}</span>
+            </label>
+            {!keyIsPermanent ? (
+              <label>
+                {tr(t, 'keyExpiresAt', '到期时间')}
+                <input
+                  type="datetime-local"
+                  step="1"
+                  value={keyExpiresAt}
+                  onChange={(event) => setKeyExpiresAt(event.target.value)}
+                  required
+                />
+              </label>
+            ) : null}
+            <div className="modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setKeyTarget(null)}>
+                {t.cancel}
+              </button>
+              <button type="submit" className="primary-button">
+                <Plus size={16} />
+                {tr(t, 'addUpstreamKey', '添加上游 Key')}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {deleteTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel modal-panel-danger" role="dialog" aria-modal="true">
+            <div className="section-heading">
+              <div>
+                <h2>{tr(t, 'deleteChannelConfirm', '确认删除这个渠道？')}</h2>
+                <p>{deleteTarget.name}</p>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setDeleteTarget(null)}>
+                {t.cancel}
+              </button>
+              <button type="button" className="danger-button" onClick={() => deleteChannel(deleteTarget)}>
+                <Trash2 size={16} />
+                {t.delete}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {keyEditTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <form className="modal-panel" onSubmit={saveEditedKey}>
+            <div className="section-heading">
+              <div>
+                <h2>{tr(t, 'editUpstreamKey', '编辑上游 Key')}</h2>
+                <p>
+                  {keyEditTarget.channel.name} · {keyEditTarget.key.keyPreview}
+                </p>
+              </div>
+            </div>
+            <label>
+              {tr(t, 'upstreamKeyName', 'Key 名称')}
+              <input value={keyEditName} onChange={(event) => setKeyEditName(event.target.value)} autoFocus />
+            </label>
+            <label>
+              API Key
+              <input
+                value={keyEditValue}
+                onChange={(event) => setKeyEditValue(event.target.value)}
+                placeholder={tr(t, 'leaveBlankKeepKey', '留空则不更换 Key')}
+              />
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={keyEditIsPermanent}
+                onChange={(event) => setKeyEditIsPermanent(event.target.checked)}
+              />
+              <span>{tr(t, 'permanentKey', '永久有效')}</span>
+            </label>
+            {!keyEditIsPermanent ? (
+              <label>
+                {tr(t, 'keyExpiresAt', '到期时间')}
+                <input
+                  type="datetime-local"
+                  step="1"
+                  value={keyEditExpiresAt}
+                  onChange={(event) => setKeyEditExpiresAt(event.target.value)}
+                  required
+                />
+              </label>
+            ) : null}
+            <div className="modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setKeyEditTarget(null)}>
+                {t.cancel}
+              </button>
+              <button type="submit" className="primary-button">
+                <Check size={16} />
+                {t.savePlan}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {modelRateTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <form className="modal-panel channel-modal-panel" onSubmit={saveModelRate}>
+            <div className="section-heading">
+              <div>
+                <h2>{modelRateTarget.rate ? tr(t, 'editModelRate', '编辑模型计费') : tr(t, 'addModelRate', '新增模型计费')}</h2>
+                <p>{modelRateTarget.channel.name}</p>
+              </div>
+            </div>
+            <div className="channel-form-grid">
+              <label>
+                Agent
+                <select
+                  value={modelRateForm.agentType}
+                  onChange={(event) => setModelRateForm((value) => ({ ...value, agentType: event.target.value as GuideAgentId }))}
+                >
+                  <option value="claude-code">Claude Code</option>
+                  <option value="codex">Codex</option>
+                </select>
+              </label>
+              <label>
+                {tr(t, 'modelName', '模型名称')}
+                <input
+                  value={modelRateForm.model}
+                  onChange={(event) => setModelRateForm((value) => ({ ...value, model: event.target.value }))}
+                  placeholder="claude-sonnet-5* / gpt-5.3-codex / *"
+                  required
+                />
+              </label>
+              <label>
+                {tr(t, 'inputRate', '输入单价 / M')}
+                <input
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  value={modelRateForm.inputRatePerMillion}
+                  onChange={(event) => setModelRateForm((value) => ({ ...value, inputRatePerMillion: Number(event.target.value) }))}
+                />
+              </label>
+              <label>
+                {tr(t, 'outputRate', '输出单价 / M')}
+                <input
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  value={modelRateForm.outputRatePerMillion}
+                  onChange={(event) => setModelRateForm((value) => ({ ...value, outputRatePerMillion: Number(event.target.value) }))}
+                />
+              </label>
+              <label>
+                {tr(t, 'cacheWriteRate', '缓存写入 / M')}
+                <input
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  value={modelRateForm.cacheCreationRatePerMillion}
+                  onChange={(event) =>
+                    setModelRateForm((value) => ({ ...value, cacheCreationRatePerMillion: Number(event.target.value) }))
+                  }
+                />
+              </label>
+              <label>
+                {tr(t, 'cacheReadRate', '缓存读取 / M')}
+                <input
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  value={modelRateForm.cacheReadRatePerMillion}
+                  onChange={(event) => setModelRateForm((value) => ({ ...value, cacheReadRatePerMillion: Number(event.target.value) }))}
+                />
+              </label>
+              <label>
+                {tr(t, 'sortOrder', '排序')}
+                <input
+                  type="number"
+                  value={modelRateForm.sortOrder}
+                  onChange={(event) => setModelRateForm((value) => ({ ...value, sortOrder: Number(event.target.value) }))}
+                />
+              </label>
+            </div>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={modelRateForm.isDefault}
+                onChange={(event) => setModelRateForm((value) => ({ ...value, isDefault: event.target.checked }))}
+              />
+              <span>{tr(t, 'defaultModelRate', '作为该 Agent 的默认计费')}</span>
+            </label>
+            <div className="modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setModelRateTarget(null)}>
+                {t.cancel}
+              </button>
+              <button type="submit" className="primary-button">
+                <Check size={16} />
+                {t.savePlan}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {keyDeleteTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel modal-panel-danger" role="dialog" aria-modal="true">
+            <div className="section-heading">
+              <div>
+                <h2>{tr(t, 'deleteUpstreamKeyConfirm', '确认删除这个上游 Key？')}</h2>
+                <p>
+                  {keyDeleteTarget.channel.name} · {keyDeleteTarget.key.keyPreview}
+                </p>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setKeyDeleteTarget(null)}>
+                {t.cancel}
+              </button>
+              <button type="button" className="danger-button" onClick={() => deleteKey(keyDeleteTarget.channel, keyDeleteTarget.key)}>
+                <Trash2 size={16} />
+                {t.delete}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ChannelCard({
+  channel,
+  t,
+  isExpanded,
+  onToggle,
+  onEdit,
+  onAddKey,
+  onDelete,
+  onKeyStatus,
+  onEditKey,
+  onDeleteKey,
+  onAddModelRate,
+  onEditModelRate,
+  onDeleteModelRate
+}: {
+  channel: UpstreamChannel;
+  t: Record<string, string>;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onEdit: () => void;
+  onAddKey: () => void;
+  onDelete: () => void;
+  onKeyStatus: (key: UpstreamChannelKey, status: UpstreamChannelKey['status']) => void;
+  onEditKey: (key: UpstreamChannelKey) => void;
+  onDeleteKey: (key: UpstreamChannelKey) => void;
+  onAddModelRate: () => void;
+  onEditModelRate: (rate: UpstreamModelRate) => void;
+  onDeleteModelRate: (rate: UpstreamModelRate) => void;
+}) {
+  const totalKeys = channel.keyCounts.shared + channel.keyCounts['claude-code'] + channel.keyCounts.codex;
+  const claudeRates = channel.modelRates.filter((rate) => rate.agentType === 'claude-code');
+  const codexRates = channel.modelRates.filter((rate) => rate.agentType === 'codex');
+  return (
+    <article className="channel-card">
+      <div className="channel-card-head">
+        <div>
+          <div className="channel-title-row">
+            <button type="button" className="channel-toggle-button" onClick={onToggle} aria-expanded={isExpanded} title={isExpanded ? tr(t, 'collapseKeys', '收起 Key') : tr(t, 'expandKeys', '展开 Key')}>
+              <ChevronDown size={16} className={isExpanded ? 'rotate-icon open' : 'rotate-icon'} />
+            </button>
+            <strong>{channel.name}</strong>
+            <span className={channel.status === 'active' ? 'status-code ok' : 'status-code error'}>
+              {channel.status === 'active' ? tr(t, 'active', '启用') : t.pause}
+            </span>
+            {channel.degradedUntil ? (
+              <span className="status-pill warn">
+                {tr(t, 'recoverAt', '恢复于')} {fullDate(channel.degradedUntil)}
+              </span>
+            ) : null}
+          </div>
+          <p>
+            {tr(t, 'serverErrorRecoveryMinutes', '500+ 恢复分钟')}: {channel.serverErrorRecoveryMinutes} ·{' '}
+            {tr(t, 'displayUsageMultiplier', '显示用量倍率')}: {channel.displayUsageMultiplier.toFixed(2)} ·{' '}
+            {tr(t, 'billingRates', '计费')}: Claude {claudeRates.length} / Codex {codexRates.length}
+          </p>
+        </div>
+        <div className="row-actions">
+          <button type="button" className="secondary-button" onClick={onAddKey}>
+            <Plus size={15} />
+            {tr(t, 'addUpstreamKey', '添加上游 Key')}
+          </button>
+          <button type="button" className="secondary-button" onClick={onEdit}>
+            {tr(t, 'edit', '编辑')}
+          </button>
+          <button type="button" className="icon-button danger" onClick={onDelete} title={t.delete}>
+            <Trash2 size={16} />
+          </button>
+        </div>
+      </div>
+
+      <div className="channel-url-grid">
+        <div>
+          <span>Claude Code</span>
+          <code>{channel.claudeApiUrl}</code>
+        </div>
+        <div>
+          <span>Codex</span>
+          <code>{channel.codexApiUrl}</code>
+        </div>
+      </div>
+
+      <div className="channel-key-mode">
+        <span>{channel.useIndependentAgentKeys ? tr(t, 'independentKeys', '独立 Key') : tr(t, 'sharedKey', '共享 Key')}</span>
+        <span>{tr(t, 'totalKeys', '总数')} {totalKeys}</span>
+        <span>Shared {channel.keyCounts.shared}</span>
+        <span>Claude {channel.keyCounts['claude-code']}</span>
+        <span>Codex {channel.keyCounts.codex}</span>
+      </div>
+
+      {isExpanded ? (
+        <>
+          <div className="model-rate-section">
+            <div className="model-rate-heading">
+              <strong>{tr(t, 'modelRates', '模型计费')}</strong>
+              <button type="button" className="secondary-button" onClick={onAddModelRate}>
+                <Plus size={15} />
+                {tr(t, 'addModelRate', '新增模型计费')}
+              </button>
+            </div>
+            <div className="model-rate-groups">
+              <ModelRateGroup title="Claude Code" rates={claudeRates} t={t} onEdit={onEditModelRate} onDelete={onDeleteModelRate} />
+              <ModelRateGroup title="Codex" rates={codexRates} t={t} onEdit={onEditModelRate} onDelete={onDeleteModelRate} />
+            </div>
+          </div>
+          {channel.keys.length ? (
+          <div className="upstream-key-list">
+            {channel.keys.map((key) => {
+              const isExpired = isPastDate(key.expiresAt);
+              return (
+                <div className="upstream-key-row" key={key.id}>
+                  <div>
+                    {key.name ? <span className="upstream-key-name">{key.name}</span> : null}
+                    <strong>{key.keyPreview}</strong>
+                    <span>{agentTypeLabel(key.agentType)}</span>
+                  </div>
+                  <span className={key.status === 'active' && !isExpired ? 'status-code ok' : 'status-code error'}>
+                    {isExpired ? tr(t, 'expired', '已过期') : key.status === 'active' ? tr(t, 'active', '启用') : key.status === 'paused' ? t.pause : t.revoke}
+                  </span>
+                  <div className="upstream-key-meta">
+                    <span>
+                      {tr(t, 'keyExpiresAt', '到期时间')}: {key.expiresAt ? displayDateTime(key.expiresAt) : tr(t, 'permanentKey', '永久有效')}
+                    </span>
+                    <span>{key.exhaustedUntil ? `${tr(t, 'recoverAt', '恢复于')} ${fullDate(key.exhaustedUntil)}` : key.lastUsedAt ? fullDate(key.lastUsedAt) : t.never}</span>
+                  </div>
+                  <div className="row-actions">
+                    <button type="button" className="secondary-button" onClick={() => onEditKey(key)}>
+                      {tr(t, 'edit', '编辑')}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => onKeyStatus(key, key.status === 'active' ? 'paused' : 'active')}
+                    >
+                      {key.status === 'active' ? t.pause : t.resume}
+                    </button>
+                    <button type="button" className="icon-button danger" onClick={() => onDeleteKey(key)} title={t.delete}>
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          ) : (
+            <Empty t={t} />
+          )}
+        </>
+      ) : null}
+      {channel.degradedReason ? <p className="channel-failure">{channel.degradedReason}</p> : null}
+    </article>
+  );
+}
+
+function agentTypeLabel(value: UpstreamKeyAgentType) {
+  if (value === 'claude-code') return 'Claude Code';
+  if (value === 'codex') return 'Codex';
+  return 'Shared';
+}
+
+function ModelRateGroup({
+  title,
+  rates,
+  t,
+  onEdit,
+  onDelete
+}: {
+  title: string;
+  rates: UpstreamModelRate[];
+  t: Record<string, string>;
+  onEdit: (rate: UpstreamModelRate) => void;
+  onDelete: (rate: UpstreamModelRate) => void;
+}) {
+  return (
+    <div className="model-rate-group">
+      <div className="model-rate-group-title">{title}</div>
+      {rates.length ? (
+        <div className="model-rate-list">
+          {rates.map((rate) => (
+            <div className="model-rate-row" key={rate.id}>
+              <div>
+                <strong>{rate.model}</strong>
+                {rate.isDefault ? <span>{tr(t, 'defaultRate', '默认')}</span> : null}
+              </div>
+              <span>I {rate.inputRatePerMillion}</span>
+              <span>CW {rate.cacheCreationRatePerMillion}</span>
+              <span>CR {rate.cacheReadRatePerMillion}</span>
+              <span>O {rate.outputRatePerMillion}</span>
+              <div className="row-actions">
+                <button type="button" className="secondary-button" onClick={() => onEdit(rate)}>
+                  {tr(t, 'edit', '编辑')}
+                </button>
+                <button type="button" className="icon-button danger" onClick={() => onDelete(rate)} title={t.delete}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <Empty t={t} />
+      )}
+    </div>
+  );
+}
+
 function PlansPanel({
   data,
   headers,
@@ -2954,22 +5785,22 @@ function PlansPanel({
   setView: (view: PlanView) => void;
 }) {
   const [redeemCode, setRedeemCode] = React.useState('');
-  const [redeemNotice, setRedeemNotice] = React.useState('');
   const [giftPreview, setGiftPreview] = React.useState<GiftCardPreview | null>(null);
   const [isRedeeming, setIsRedeeming] = React.useState(false);
   const [purchaseTarget, setPurchaseTarget] = React.useState<UpgradePlan | null>(null);
+  const [isRechargeOpen, setIsRechargeOpen] = React.useState(false);
   const primaryKey = data.keys.find((key) => key.status === 'active') || data.keys[0];
   const accountPlan =
     data.plans.find((plan) => plan.id === data.account.currentPlanId) ||
     data.plans.find((plan) => plan.id === 'free');
   const quota = buildAccountQuota(data, accountPlan, primaryKey?.usage) || emptyQuota();
+  const currencyCode = accountPlan?.currency || 'CNY';
 
   async function redeem(event: React.FormEvent) {
     event.preventDefault();
     const code = redeemCode.trim();
     if (!code) return;
     setIsRedeeming(true);
-    setRedeemNotice('');
     try {
       const response = await fetch('/api/user/gift-cards/preview', {
         method: 'POST',
@@ -2978,7 +5809,7 @@ function PlansPanel({
       });
       const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setRedeemNotice(responseErrorMessage(response, payload, t.requestFailed));
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
         return;
       }
       const result = payload as GiftCardPreview;
@@ -2988,7 +5819,7 @@ function PlansPanel({
       }
       await redeemCreditGiftCard(code);
     } catch (error) {
-      setRedeemNotice(unknownErrorMessage(error, t.requestFailed));
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
     } finally {
       setIsRedeeming(false);
     }
@@ -3003,14 +5834,14 @@ function PlansPanel({
       });
       const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setRedeemNotice(responseErrorMessage(response, payload, t.requestFailed));
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
         return;
       }
-      setRedeemNotice((payload as { message?: string }).message || t.redeem);
+      showSuccessToast((payload as { message?: string }).message || t.redeem);
       setRedeemCode('');
       await reload();
     } catch (error) {
-      setRedeemNotice(unknownErrorMessage(error, t.requestFailed));
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
     }
   }
 
@@ -3025,23 +5856,18 @@ function PlansPanel({
       });
       const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setRedeemNotice(responseErrorMessage(response, payload, t.requestFailed));
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
         return;
       }
       setGiftPreview(null);
       setRedeemCode('');
-      setRedeemNotice((payload as { message?: string }).message || t.redeem);
+      showSuccessToast((payload as { message?: string }).message || t.redeem);
       await reload();
     } catch (error) {
-      setRedeemNotice(unknownErrorMessage(error, t.requestFailed));
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
     } finally {
       setIsRedeeming(false);
     }
-  }
-
-  function openPurchaseLink(channelId: PurchaseChannelId) {
-    window.open(planPurchaseLinks[channelId], '_blank', 'noopener,noreferrer');
-    setPurchaseTarget(null);
   }
 
   if (view === 'change') {
@@ -3055,9 +5881,11 @@ function PlansPanel({
         />
         {purchaseTarget ? (
           <PurchaseChannelModal
-            description={t.purchaseChannelDescription.replace('{plan}', purchaseTarget.name)}
+            description={t.purchaseChannelDescription}
+            mode="plan"
+            initialItemId={purchaseTarget.id}
+            productLinks={data.productLinks}
             onClose={() => setPurchaseTarget(null)}
-            onOpenChannel={openPurchaseLink}
             t={t}
           />
         ) : null}
@@ -3097,13 +5925,33 @@ function PlansPanel({
             </div>
           </div>
         </article>
+        <article className="current-plan-card balance-plan-card">
+          <div className="free-plan-badge">{t.balance}</div>
+          <div className="current-plan-copy">
+            <strong>{currency(data.summary.accountBalanceCents, currencyCode)}</strong>
+            <p>{t.extraBalance}</p>
+          </div>
+          <div className="current-plan-quotas">
+            <div>
+              <span>{t.todayUsage}</span>
+              <strong>{currency(data.summary.todayCostCents, currencyCode)}</strong>
+            </div>
+            <div>
+              <span>{t.todayRequests}</span>
+              <strong>{compact(data.summary.todayRequests)}</strong>
+            </div>
+          </div>
+          <button type="button" className="primary-button" onClick={() => setIsRechargeOpen(true)}>
+            <Plus size={16} />
+            {t.recharge}
+          </button>
+        </article>
       </section>
 
       <section className="billing-section redeem-card-section">
         <h2>{t.redeemCard}</h2>
         <form className="redeem-card-panel" onSubmit={redeem}>
           <p>{t.redeemCardHint}</p>
-          {redeemNotice ? <div className="notice inline">{redeemNotice}</div> : null}
           <div className="redeem-row">
             <input
               className="redeem-card-input"
@@ -3124,6 +5972,15 @@ function PlansPanel({
           disabled={isRedeeming}
           onConfirm={confirmGiftCard}
           onClose={() => setGiftPreview(null)}
+        />
+      ) : null}
+      {isRechargeOpen ? (
+        <PurchaseChannelModal
+          description={t.rechargeChannelDescription}
+          mode="credit"
+          productLinks={data.productLinks}
+          onClose={() => setIsRechargeOpen(false)}
+          t={t}
         />
       ) : null}
     </section>
@@ -3214,15 +6071,45 @@ function PlanChangePage({
 
 function PurchaseChannelModal({
   description,
+  mode,
+  initialItemId,
+  productLinks,
   onClose,
-  onOpenChannel,
   t
 }: {
   description: string;
+  mode: PurchaseMode;
+  initialItemId?: string;
+  productLinks: ProductLink[];
   onClose: () => void;
-  onOpenChannel: (channelId: PurchaseChannelId) => void;
   t: Record<string, string>;
 }) {
+  const options = React.useMemo(
+    () => (mode === 'plan' ? planProductOptions() : creditProductOptions()),
+    [mode]
+  );
+  const defaultItemId = initialItemId && options.some((option) => option.itemId === initialItemId)
+    ? initialItemId
+    : options[0]?.itemId || '';
+  const [selectedChannel, setSelectedChannel] = React.useState<PurchaseChannelId>('taobao');
+  const [selectedItemId, setSelectedItemId] = React.useState(defaultItemId);
+
+  React.useEffect(() => {
+    setSelectedItemId(defaultItemId);
+  }, [defaultItemId]);
+
+  const selectedOption = options.find((option) => option.itemId === selectedItemId) || options[0];
+
+  function openSelectedProduct() {
+    if (!selectedOption) return;
+    window.open(
+      productLinkUrl(productLinks, selectedOption.itemType, selectedOption.itemId, selectedChannel),
+      '_blank',
+      'noopener,noreferrer'
+    );
+    onClose();
+  }
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <section
@@ -3238,26 +6125,49 @@ function PurchaseChannelModal({
             <p>{description}</p>
           </div>
         </div>
-        <div className="purchase-channel-grid">
-          {purchaseChannels.map((channel) => {
-            return (
+        <div className="purchase-modal-section">
+          <span>{t.purchaseChannelTitle}</span>
+          <div className="purchase-channel-grid">
+            {purchaseChannels.map((channel) => {
+              return (
+                <button
+                  type="button"
+                  className={selectedChannel === channel.id ? 'purchase-channel-card active' : 'purchase-channel-card'}
+                  key={channel.id}
+                  onClick={() => setSelectedChannel(channel.id)}
+                >
+                  <span className="purchase-channel-icon">
+                    <img src={channel.iconSrc} alt="" />
+                  </span>
+                  <strong>{t[channel.labelKey]}</strong>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="purchase-modal-section">
+          <span>{mode === 'plan' ? tr(t, 'purchasePlanTitle', '套餐') : tr(t, 'purchaseCreditTitle', '额度')}</span>
+          <div className="purchase-product-grid">
+            {options.map((option) => (
               <button
                 type="button"
-                className="purchase-channel-card"
-                key={channel.id}
-                onClick={() => onOpenChannel(channel.id)}
+                className={selectedItemId === option.itemId ? 'purchase-product-card active' : 'purchase-product-card'}
+                key={`${option.itemType}-${option.itemId}`}
+                onClick={() => setSelectedItemId(option.itemId)}
               >
-                <span className="purchase-channel-icon">
-                  <img src={channel.iconSrc} alt="" />
-                </span>
-                <strong>{t[channel.labelKey]}</strong>
+                <strong>{option.name}</strong>
+                <span>{option.priceLabel}</span>
               </button>
-            );
-          })}
+            ))}
+          </div>
         </div>
         <div className="modal-actions">
           <button type="button" className="secondary-button" onClick={onClose}>
             {t.cancel}
+          </button>
+          <button type="button" className="primary-button" onClick={openSelectedProduct} disabled={!selectedOption}>
+            <ShoppingBag size={16} />
+            {tr(t, 'goPurchase', '去购买')}
           </button>
         </div>
       </section>
@@ -3332,7 +6242,6 @@ function LogsPanel({ keys, headers, t }: { keys: ApiKey[]; headers: HeadersInit;
   const [page, setPage] = React.useState(1);
   const [logPage, setLogPage] = React.useState<LogPage>({ logs: [], total: 0, page: 1, pageSize: 20 });
   const [loading, setLoading] = React.useState(false);
-  const [notice, setNotice] = React.useState('');
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const pageCount = Math.max(1, Math.ceil(logPage.total / logPage.pageSize));
 
@@ -3349,14 +6258,13 @@ function LogsPanel({ keys, headers, t }: { keys: ApiKey[]; headers: HeadersInit;
       const response = await fetch(`/api/user/logs?${params.toString()}`, { headers });
       const payload = await readJsonResponse(response);
       if (!response.ok) {
-        setNotice(responseErrorMessage(response, payload, t.requestFailed));
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
         return;
       }
       setLogPage(payload as LogPage);
       setExpandedId(null);
-      setNotice('');
     } catch (error) {
-      setNotice(unknownErrorMessage(error, t.requestFailed));
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
     } finally {
       setLoading(false);
     }
@@ -3414,25 +6322,31 @@ function LogsPanel({ keys, headers, t }: { keys: ApiKey[]; headers: HeadersInit;
         </label>
       </div>
       <section className="table-panel">
-        {notice ? <div className="notice inline">{notice}</div> : null}
         {loading ? <div className="loading-line" /> : null}
         <LogRows logs={logPage.logs} t={t} expandedId={expandedId} setExpandedId={setExpandedId} />
         <div className="pagination-bar">
           <span>{t.logTotal.replace('{total}', String(logPage.total))}</span>
           <div>
-            <button type="button" className="secondary-button" onClick={() => setPage((value) => value - 1)} disabled={page <= 1}>
-              {t.previousPage}
+            <button
+              type="button"
+              className="icon-button compact"
+              onClick={() => setPage((value) => value - 1)}
+              disabled={page <= 1}
+              title={t.previousPage}
+            >
+              <ChevronLeft size={16} />
             </button>
             <strong>
               {page} / {pageCount}
             </strong>
             <button
               type="button"
-              className="secondary-button"
+              className="icon-button compact"
               onClick={() => setPage((value) => value + 1)}
               disabled={page >= pageCount}
+              title={t.nextPage}
             >
-              {t.nextPage}
+              <ChevronRight size={16} />
             </button>
           </div>
         </div>
@@ -3520,14 +6434,20 @@ function buildAccountQuota(data: Bootstrap, plan?: Plan, fallback?: QuotaSnapsho
   const weeklyUsed = Math.max(0, Number(data.summary.weeklyCostCents || fallback?.weeklyUsed || 0));
   const fiveHourLimit = Math.max(0, Number(plan.fiveHourTokenLimit || fallback?.fiveHourLimit || 0));
   const weeklyLimit = Math.max(0, Number(plan.weeklyTokenLimit || fallback?.weeklyLimit || 0));
+  const balanceCents = Math.max(0, Number(data.summary.accountBalanceCents || fallback?.balanceCents || 0));
+  const remainingFiveHour = Math.max(0, fiveHourLimit - fiveHourUsed);
+  const remainingWeekly = Math.max(0, weeklyLimit - weeklyUsed);
+  const quotaSource = remainingFiveHour > 0 && remainingWeekly > 0 ? 'plan' : balanceCents > 0 ? 'balance' : 'none';
 
   return {
     fiveHourUsed,
     fiveHourLimit,
     weeklyUsed,
     weeklyLimit,
-    remainingFiveHour: Math.max(0, fiveHourLimit - fiveHourUsed),
-    remainingWeekly: Math.max(0, weeklyLimit - weeklyUsed),
+    remainingFiveHour,
+    remainingWeekly,
+    balanceCents,
+    quotaSource,
     fiveHourResetAt: fallback?.fiveHourResetAt || '',
     weeklyResetAt: fallback?.weeklyResetAt || ''
   };
@@ -3541,6 +6461,8 @@ function emptyQuota(): QuotaSnapshot {
     weeklyLimit: 0,
     remainingFiveHour: 0,
     remainingWeekly: 0,
+    balanceCents: 0,
+    quotaSource: 'none',
     fiveHourResetAt: '',
     weeklyResetAt: ''
   };
@@ -3618,4 +6540,13 @@ function fullDate(value: string) {
   }).format(new Date(value));
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+function Root() {
+  return (
+    <>
+      <ToastViewport />
+      <App />
+    </>
+  );
+}
+
+createRoot(document.getElementById('root')!).render(<Root />);
