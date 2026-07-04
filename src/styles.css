@@ -3979,6 +3979,44 @@ code {
   font-size: 12px;
 }
 
+.log-type-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(var(--surface-rgb), 0.72);
+}
+
+.log-type-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.log-type-tab:hover {
+  color: var(--accent-text);
+  background: rgba(var(--accent-rgb), 0.08);
+}
+
+.log-type-tab.active {
+  color: var(--accent-text);
+  background: rgba(var(--accent-rgb), 0.1);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.log-type-tab:focus-visible {
+  outline: 2px solid rgba(var(--accent-rgb), 0.35);
+  outline-offset: 2px;
+}
+
 .pagination-bar {
   display: flex;
   align-items: center;
@@ -4027,16 +4065,31 @@ code {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--card-gradient);
+  position: relative;
+}
+
+.log-head {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.5fr) minmax(84px, 0.45fr) minmax(84px, 0.45fr) minmax(96px, 0.55fr) minmax(148px, 0.85fr) minmax(72px, 0.4fr);
+  gap: 12px;
+  align-items: center;
+  padding: 0 12px 8px;
+}
+
+.log-head span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .log-summary {
   display: grid;
-  grid-template-columns: minmax(220px, 1.5fr) minmax(90px, 0.5fr) minmax(88px, 0.5fr) minmax(160px, 0.8fr) minmax(76px, 0.4fr) 24px;
-  gap: 14px;
+  grid-template-columns: minmax(200px, 1.5fr) minmax(84px, 0.45fr) minmax(84px, 0.45fr) minmax(96px, 0.55fr) minmax(148px, 0.85fr) minmax(72px, 0.4fr);
+  gap: 12px;
   align-items: center;
+  position: relative;
   width: 100%;
   min-height: 62px;
-  padding: 12px;
+  padding: 12px 12px 12px 36px;
   border: 0;
   background: transparent;
   color: var(--ink);
@@ -4061,6 +4114,21 @@ code {
 .log-summary span {
   color: var(--muted);
   font-size: 12px;
+  min-width: 0;
+}
+
+.log-expand-indicator {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%) rotate(0deg);
+  transform-origin: center;
+  pointer-events: none;
+  color: var(--muted);
+}
+
+.log-expand-indicator.open {
+  transform: translateY(-50%) rotate(180deg);
 }
 
 .log-cost {
@@ -4085,7 +4153,7 @@ code {
 
 .cost-breakdown {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   padding-top: 10px;
   border-top: 1px solid var(--line);
@@ -4273,7 +4341,8 @@ code {
 
   .key-table-head,
   .gift-card-table-head,
-  .order-history-head {
+  .order-history-head,
+  .log-head {
     display: none;
   }
 

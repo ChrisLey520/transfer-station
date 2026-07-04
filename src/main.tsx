@@ -150,6 +150,8 @@ type KeySecret = {
 type UsageLog = {
   id: string;
   apiKeyId: string | null;
+  channelGroupId: string | null;
+  channelNumber: number | null;
   usageSource: 'plan' | 'balance' | 'none';
   model: string;
   path: string;
@@ -239,6 +241,7 @@ type ClaimedOrder = {
   subOrderId: string;
   platform: PurchaseChannelId;
   title: string;
+  giftCardType?: 'credit' | 'plan' | null;
   giftCardCode: string | null;
   deliveryStatus: 'pending' | 'ready' | 'claimed' | 'skipped' | 'failed';
   claimedAt: string | null;
@@ -301,6 +304,7 @@ type UpstreamModelRate = {
 
 type UpstreamChannel = {
   id: string;
+  channelNumber: number;
   name: string;
   status: 'active' | 'paused';
   claudeApiUrl: string;
@@ -459,7 +463,10 @@ const dictionary = {
     recharge: '充值',
     todayUsage: '今日用量',
     todayRequests: '今日请求',
-    todayCacheHitRate: '今日缓存命中率',
+    todayCacheHitRate: '今日缓存复用率',
+    todayCacheReuseHint: '按今日全部请求汇总计算',
+    requestCacheHitRate: '本次缓存命中率',
+    requestCacheHitHint: '按当前请求单次计算',
     upgrade: '升级',
     overviewWelcome: '欢迎回来',
     overviewWelcomeNamed: '欢迎回来，{name}',
@@ -714,7 +721,10 @@ const dictionary = {
     recharge: '儲值',
     todayUsage: '今日用量',
     todayRequests: '今日請求',
-    todayCacheHitRate: '今日快取命中率',
+    todayCacheHitRate: '今日快取複用率',
+    todayCacheReuseHint: '按今日全部請求彙總計算',
+    requestCacheHitRate: '本次快取命中率',
+    requestCacheHitHint: '按目前請求單次計算',
     upgrade: '升級',
     overviewWelcome: '歡迎回來',
     overviewWelcomeNamed: '歡迎回來，{name}',
@@ -969,7 +979,10 @@ const dictionary = {
     recharge: 'Recharge',
     todayUsage: 'Today usage',
     todayRequests: 'Today requests',
-    todayCacheHitRate: 'Today cache hit rate',
+    todayCacheHitRate: 'Today cache reuse rate',
+    todayCacheReuseHint: 'Calculated from all requests today',
+    requestCacheHitRate: 'Per-request cache hit rate',
+    requestCacheHitHint: 'Calculated from this request only',
     upgrade: 'Upgrade',
     overviewWelcome: 'Welcome back',
     overviewWelcomeNamed: 'Welcome back, {name}',
@@ -2957,7 +2970,7 @@ function OverviewPage({
           </div>
           <span>{t.todayCacheHitRate}</span>
           <strong>{percent(todayCacheHitRate)}</strong>
-          <p>{t.cacheHit}: {tokenK(data.summary.todayCacheReadInputTokens)}</p>
+          <p>{tr(t, 'todayCacheReuseHint', '按今日全部请求汇总计算')} · {t.cacheHit}: {tokenK(data.summary.todayCacheReadInputTokens)}</p>
         </article>
 
         <article className="overview-card">
@@ -5357,7 +5370,7 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
         <div className="section-heading">
           <div>
             <h2>{tr(t, 'channelManagement', '渠道管理')}</h2>
-            <p>{tr(t, 'channelDescription', '配置上游渠道、Agent URL、共享或独立 API Key，以及故障恢复策略。')}</p>
+            <p>{tr(t, 'channelDescription', '配置上游渠道、Agent URL、共享或独立 API Key、故障恢复策略，以及智能调度优先级（值越小越先尝试）。')}</p>
           </div>
           <button type="button" className="primary-button" onClick={openCreate}>
             <Plus size={17} />
@@ -5493,7 +5506,7 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
                 />
               </label>
               <label>
-                {tr(t, 'serverErrorRecoveryMinutes', '500+ 恢复分钟')}
+                {tr(t, 'serverErrorRecoveryMinutes', '上游服务端错误恢复时间')}
                 <input
                   type="number"
                   min="5"
@@ -5520,11 +5533,15 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
                 />
               </label>
               <label>
-                {tr(t, 'sortOrder', '排序')}
+                {tr(t, 'channelPriority', '优先级（越小越靠前）')}
                 <input
                   type="number"
+                  min="1"
+                  step="1"
                   value={channelForm.sortOrder}
-                  onChange={(event) => setChannelForm((value) => ({ ...value, sortOrder: Number(event.target.value) }))}
+                  onChange={(event) =>
+                    setChannelForm((value) => ({ ...value, sortOrder: Math.max(1, Math.trunc(Number(event.target.value) || 1)) }))
+                  }
                 />
               </label>
             </div>
@@ -5863,6 +5880,8 @@ function ChannelCard({
               <ChevronDown size={16} className={isExpanded ? 'rotate-icon open' : 'rotate-icon'} />
             </button>
             <strong>{channel.name}</strong>
+            <span className="status-pill">{tr(t, 'channelNumber', '渠道编号')} #{channel.channelNumber}</span>
+            <span className="status-pill">{tr(t, 'channelPriorityShort', '优先级')} {channel.sortOrder}</span>
             <span className={channel.status === 'active' ? 'status-code ok' : 'status-code error'}>
               {channel.status === 'active' ? tr(t, 'active', '启用') : t.pause}
             </span>
@@ -5873,7 +5892,7 @@ function ChannelCard({
             ) : null}
           </div>
           <p>
-            {tr(t, 'serverErrorRecoveryMinutes', '500+ 恢复分钟')}: {channel.serverErrorRecoveryMinutes} ·{' '}
+            {tr(t, 'serverErrorRecoveryMinutes', '上游服务端错误恢复时间')}: {channel.serverErrorRecoveryMinutes} ·{' '}
             {tr(t, 'displayUsageMultiplier', '显示用量倍率')}: {channel.displayUsageMultiplier.toFixed(2)} ·{' '}
             {tr(t, 'billingRates', '计费')}: Claude {claudeRates.length} / Codex {codexRates.length}
           </p>
@@ -6565,6 +6584,8 @@ function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers:
   const [status, setStatus] = React.useState<LogStatus>('all');
   const [apiKeyId, setApiKeyId] = React.useState('all');
   const [range, setRange] = React.useState<LogRange>('24h');
+  const [giftCardType, setGiftCardType] = React.useState<'all' | 'credit' | 'plan'>('all');
+  const [giftCardCode, setGiftCardCode] = React.useState('');
   const [usagePage, setUsagePage] = React.useState(1);
   const [claimsPage, setClaimsPage] = React.useState(1);
   const [redemptionsPage, setRedemptionsPage] = React.useState(1);
@@ -6590,10 +6611,14 @@ function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers:
       } else if (tab === 'claims') {
         params.set('pageSize', String(claimPage.pageSize));
         params.set('days', '30');
+        params.set('giftCardType', giftCardType);
+        if (giftCardCode.trim()) params.set('giftCardCode', giftCardCode.trim());
         response = await fetch(`/api/user/orders/claims?${params.toString()}`, { headers });
       } else {
         params.set('pageSize', String(redemptionPage.pageSize));
         params.set('days', '30');
+        params.set('type', giftCardType);
+        if (giftCardCode.trim()) params.set('code', giftCardCode.trim());
         response = await fetch(`/api/user/gift-card-redemptions?${params.toString()}`, { headers });
       }
       const payload = await readJsonResponse(response);
@@ -6610,7 +6635,7 @@ function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers:
     } finally {
       setLoading(false);
     }
-  }, [apiKeyId, claimsPage, headers, claimPage.pageSize, logPage.pageSize, range, redemptionPage.pageSize, redemptionsPage, status, t.requestFailed, tab, usagePage]);
+  }, [apiKeyId, claimsPage, giftCardCode, giftCardType, headers, claimPage.pageSize, logPage.pageSize, range, redemptionPage.pageSize, redemptionsPage, status, t.requestFailed, tab, usagePage]);
 
   React.useEffect(() => {
     void loadLogs();
@@ -6631,17 +6656,50 @@ function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers:
     setUsagePage(1);
   }
 
+  function updateGiftCardType(value: 'all' | 'credit' | 'plan') {
+    setGiftCardType(value);
+    if (tab === 'claims') setClaimsPage(1);
+    if (tab === 'redemptions') setRedemptionsPage(1);
+  }
+
+  function updateGiftCardCode(value: string) {
+    setGiftCardCode(value);
+    if (tab === 'claims') setClaimsPage(1);
+    if (tab === 'redemptions') setRedemptionsPage(1);
+  }
+
   return (
     <section className="content-grid">
+      <div className="log-type-tabs" role="tablist" aria-label="日志分页">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'usage'}
+          className={tab === 'usage' ? 'log-type-tab active' : 'log-type-tab'}
+          onClick={() => setTab('usage')}
+        >
+          消费日志
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'claims'}
+          className={tab === 'claims' ? 'log-type-tab active' : 'log-type-tab'}
+          onClick={() => setTab('claims')}
+        >
+          礼品码记录
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'redemptions'}
+          className={tab === 'redemptions' ? 'log-type-tab active' : 'log-type-tab'}
+          onClick={() => setTab('redemptions')}
+        >
+          兑换记录
+        </button>
+      </div>
       <div className="log-filters">
-        <label>
-          日志类型
-          <select value={tab} onChange={(event) => { setTab(event.target.value as any); }}>
-            <option value="usage">消费日志</option>
-            <option value="claims">礼品码记录</option>
-            <option value="redemptions">兑换记录</option>
-          </select>
-        </label>
         {tab === 'usage' ? (
           <>
         <label>
@@ -6672,6 +6730,22 @@ function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers:
             <option value="30d">{t.last30Days}</option>
           </select>
         </label>
+          </>
+        ) : null}
+        {tab === 'claims' || tab === 'redemptions' ? (
+          <>
+            <label>
+              类型
+              <select value={giftCardType} onChange={(event) => updateGiftCardType(event.target.value as 'all' | 'credit' | 'plan')}>
+                <option value="all">全部类型</option>
+                <option value="plan">套餐</option>
+                <option value="credit">余额</option>
+              </select>
+            </label>
+            <label>
+              礼品码
+              <input value={giftCardCode} onChange={(event) => updateGiftCardCode(event.target.value)} placeholder="输入礼品码搜索" />
+            </label>
           </>
         ) : null}
       </div>
@@ -6854,6 +6928,8 @@ function UsersCenterPanel({ headers, refreshTick, t, onOpenUser }: { headers: He
 function UserDetailPanel({ headers, userId, onBack, t }: { headers: HeadersInit; userId: string; onBack: () => void; t: Record<string, string> }) {
   const [user, setUser] = React.useState<UserListItem | null>(null);
   const [tab, setTab] = React.useState<'logs' | 'claims' | 'redemptions'>('logs');
+  const [giftCardType, setGiftCardType] = React.useState<'all' | 'credit' | 'plan'>('all');
+  const [giftCardCode, setGiftCardCode] = React.useState('');
   const [logs, setLogs] = React.useState<LogPage>({ logs: [], total: 0, page: 1, pageSize: 20 });
   const [claims, setClaims] = React.useState<Paginated<{ orders: ClaimedOrder[] }>>({ orders: [], total: 0, page: 1, pageSize: 20 });
   const [redemptions, setRedemptions] = React.useState<GiftCardRedemptionPage>({ giftCards: [], total: 0, page: 1, pageSize: 20, days: 30 });
@@ -6882,8 +6958,8 @@ function UserDetailPanel({ headers, userId, onBack, t }: { headers: HeadersInit;
       const endpoint = tab === 'logs'
         ? `/api/admin/users/${userId}/logs?page=${logs.page}&pageSize=${logs.pageSize}&range=30d`
         : tab === 'claims'
-          ? `/api/admin/users/${userId}/order-claims?page=${claims.page}&pageSize=${claims.pageSize}&days=30`
-          : `/api/admin/users/${userId}/gift-card-redemptions?page=${redemptions.page}&pageSize=${redemptions.pageSize}&days=30`;
+          ? `/api/admin/users/${userId}/order-claims?page=${claims.page}&pageSize=${claims.pageSize}&days=30&giftCardType=${giftCardType}${giftCardCode.trim() ? `&giftCardCode=${encodeURIComponent(giftCardCode.trim())}` : ''}`
+          : `/api/admin/users/${userId}/gift-card-redemptions?page=${redemptions.page}&pageSize=${redemptions.pageSize}&days=30&type=${giftCardType}${giftCardCode.trim() ? `&code=${encodeURIComponent(giftCardCode.trim())}` : ''}`;
       const response = await fetch(endpoint, { headers });
       const payload = await readJsonResponse(response);
       if (!response.ok) {
@@ -6894,7 +6970,7 @@ function UserDetailPanel({ headers, userId, onBack, t }: { headers: HeadersInit;
       if (tab === 'claims') setClaims(payload as Paginated<{ orders: ClaimedOrder[] }>);
       if (tab === 'redemptions') setRedemptions(payload as GiftCardRedemptionPage);
     })();
-  }, [claims.page, claims.pageSize, headers, logs.page, logs.pageSize, redemptions.page, redemptions.pageSize, tab, t.requestFailed, userId]);
+  }, [claims.page, claims.pageSize, giftCardCode, giftCardType, headers, logs.page, logs.pageSize, redemptions.page, redemptions.pageSize, tab, t.requestFailed, userId]);
 
   return (
     <section className="content-grid">
@@ -6910,6 +6986,30 @@ function UserDetailPanel({ headers, userId, onBack, t }: { headers: HeadersInit;
           <button type="button" className={tab === 'claims' ? 'segmented-tab active' : 'segmented-tab'} onClick={() => { setTab('claims'); setClaims((value) => ({ ...value, page: 1 })); }}>礼品码领取记录</button>
           <button type="button" className={tab === 'redemptions' ? 'segmented-tab active' : 'segmented-tab'} onClick={() => { setTab('redemptions'); setRedemptions((value) => ({ ...value, page: 1 })); }}>礼品码兑换记录</button>
         </div>
+        {tab === 'claims' || tab === 'redemptions' ? (
+          <div className="log-filters">
+            <label>
+              类型
+              <select value={giftCardType} onChange={(event) => {
+                setGiftCardType(event.target.value as 'all' | 'credit' | 'plan');
+                if (tab === 'claims') setClaims((value) => ({ ...value, page: 1 }));
+                if (tab === 'redemptions') setRedemptions((value) => ({ ...value, page: 1 }));
+              }}>
+                <option value="all">全部类型</option>
+                <option value="plan">套餐</option>
+                <option value="credit">余额</option>
+              </select>
+            </label>
+            <label>
+              礼品码
+              <input value={giftCardCode} onChange={(event) => {
+                setGiftCardCode(event.target.value);
+                if (tab === 'claims') setClaims((value) => ({ ...value, page: 1 }));
+                if (tab === 'redemptions') setRedemptions((value) => ({ ...value, page: 1 }));
+              }} placeholder="输入礼品码搜索" />
+            </label>
+          </div>
+        ) : null}
         {tab === 'logs' ? <LogRows logs={logs.logs} t={t} expandedId={expandedId} setExpandedId={setExpandedId} /> : null}
         {tab === 'claims' ? <OrdersTable orders={claims.orders} /> : null}
         {tab === 'redemptions' ? <GiftRedemptionTable giftCards={redemptions.giftCards} /> : null}
@@ -6938,22 +7038,35 @@ function LogRows({
 
   return (
     <div className="log-list">
+      {!compactMode ? (
+        <div className="log-head" aria-hidden="true">
+          <span>{t.model}</span>
+          <span>{tr(t, 'channelNumber', '渠道编号')}</span>
+          <span>{t.costUsage}</span>
+          <span>{t.status}</span>
+          <span>{t.requestTime}</span>
+          <span>{t.latency}</span>
+        </div>
+      ) : null}
       {logs.map((log) => {
         const isSuccess = log.statusCode >= 200 && log.statusCode < 300;
         const isExpanded = expandedId === log.id;
         const toggle = () => setExpandedId?.(isExpanded ? null : log.id);
+        const cacheBase = log.inputTokens + log.cacheCreationInputTokens + log.cacheReadInputTokens;
+        const cacheHitRate = cacheBase ? log.cacheReadInputTokens / cacheBase : 0;
 
         return (
           <article className="log-record" key={log.id}>
             <button type="button" className="log-summary" onClick={toggle} aria-expanded={isExpanded}>
+              {!compactMode ? <ChevronDown className={isExpanded ? 'log-expand-indicator open' : 'log-expand-indicator'} size={16} /> : null}
               <div>
                 <strong>{log.model}</strong>
               </div>
+              <span>{log.channelNumber ? `#${log.channelNumber}` : '-'}</span>
               <span className="log-cost">{currency(log.totalCostCents, 'USD')}</span>
               <span className={isSuccess ? 'status-code ok' : 'status-code error'}>{isSuccess ? t.success : t.failed}</span>
               <span>{fullDate(log.createdAt)}</span>
               <span>{log.latencyMs}ms</span>
-              {!compactMode ? <ChevronDown className={isExpanded ? 'chevron open' : 'chevron'} size={16} /> : null}
             </button>
 
             {isExpanded && !compactMode ? (
@@ -6968,6 +7081,7 @@ function LogRows({
                       cents={log.cacheCreationCostCents}
                     />
                     <BreakdownItem label={t.cacheHit} tokens={log.cacheReadInputTokens} cents={log.cacheReadCostCents} />
+                    <MetricBreakdownItem label={tr(t, 'requestCacheHitRate', '本次缓存命中率')} value={percent(cacheHitRate)} />
                   </div>
                 ) : (
                   <div className="failure-detail">
@@ -6990,6 +7104,16 @@ function BreakdownItem({ label, tokens, cents }: { label: string; tokens: number
       <span>{label}</span>
       <strong>{tokenK(tokens)}</strong>
       <em>{currency(cents, 'USD')}</em>
+    </div>
+  );
+}
+
+function MetricBreakdownItem({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="breakdown-item">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <em>{hint || ''}</em>
     </div>
   );
 }
@@ -7080,7 +7204,11 @@ function roundToDecimals(value: number, digits: number) {
 }
 
 function tokenK(value: number) {
-  const amount = ceilToDecimals((value || 0) / 1000, 3);
+  const normalized = Math.max(0, Number(value || 0));
+  if (normalized < 1000) {
+    return Intl.NumberFormat('en').format(normalized);
+  }
+  const amount = ceilToDecimals(normalized / 1000, 3);
   return `${amount.toFixed(3)}k`;
 }
 
