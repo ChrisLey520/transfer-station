@@ -1,12 +1,26 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import {
+  autoUpdate,
+  flip,
+  FloatingPortal,
+  offset,
+  shift,
+  useDismiss,
+  useFloating,
+  useFocus,
+  useHover,
+  useInteractions,
+  useRole
+} from '@floating-ui/react';
+import {
   Activity,
   ArrowLeft,
   Ban,
   BarChart3,
   Check,
   ChevronDown,
+  ChevronsUpDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -43,7 +57,7 @@ const officialQqGroupNumber = '1050784021';
 
 type Language = 'zh-CN' | 'zh-TW' | 'en';
 type AuthMode = 'login' | 'register';
-type Tab = 'dashboard' | 'keys' | 'usage' | 'plans' | 'orders' | 'logs' | 'gift-cards' | 'products' | 'channels' | 'guide';
+type Tab = 'dashboard' | 'keys' | 'usage' | 'plans' | 'orders' | 'logs' | 'gift-cards' | 'products' | 'channels' | 'users' | 'user-detail' | 'guide';
 type PlanView = 'billing' | 'change';
 type PurchaseChannelId = 'taobao' | 'xianyu';
 type ProductItemType = 'plan' | 'credit';
@@ -220,6 +234,7 @@ type LogPage = {
 };
 
 type ClaimedOrder = {
+  id?: string;
   orderId: string;
   subOrderId: string;
   platform: PurchaseChannelId;
@@ -230,13 +245,35 @@ type ClaimedOrder = {
   updatedAt: string;
 };
 
+type Paginated<T> = {
+  total: number;
+  page: number;
+  pageSize: number;
+} & T;
+
+type UserListItem = UserProfile & {
+  currentPlanId: string | null;
+  currentPlanName: string | null;
+  freeCreditCents: number;
+  planExpiresAt: string | null;
+};
+
+type UserListPage = Paginated<{ users: UserListItem[] }> & {
+  sortField: 'freeCreditCents' | 'createdAt';
+  sortOrder: 'asc' | 'desc';
+};
+
+type GiftCardRedemptionPage = Paginated<{ giftCards: GiftCardCard[] }> & {
+  days: number;
+};
+
 type UpstreamChannelKey = {
   id: string;
   channelGroupId: string;
   name: string;
   agentType: UpstreamKeyAgentType;
   keyPreview: string;
-  status: 'active' | 'paused' | 'revoked';
+  status: 'active' | 'paused' | 'revoked' | 'banned';
   sortOrder: number;
   expiresAt: string | null;
   exhaustedUntil: string | null;
@@ -285,6 +322,8 @@ type UpstreamChannel = {
   createdAt: string;
   updatedAt: string;
 };
+
+type UpstreamChannelAgentTab = GuideAgentId;
 
 type MarkdownHeadingLevel = 1 | 2 | 3 | 4;
 
@@ -548,7 +587,15 @@ const dictionary = {
     quotaHint: '任一窗口耗尽都会拦截请求',
     upstreamMissing: '上游 Key 未配置',
     upstreamReady: '上游已配置',
-    requestFailed: '请求失败，请稍后重试。'
+    requestFailed: '请求失败，请稍后重试。',
+    available: '可用',
+    quotaInsufficient: '额度不足',
+    channelInternalError: '渠道内部错误',
+    autoResetAt: '自动重置时间',
+    ban: '封禁',
+    unban: '解封',
+    banned: '封禁',
+    notAvailable: '-'
   },
   'zh-TW': {
     brand: 'RelayHub',
@@ -795,7 +842,15 @@ const dictionary = {
     quotaHint: '任一視窗耗盡都會攔截請求',
     upstreamMissing: '上游 Key 未設定',
     upstreamReady: '上游已設定',
-    requestFailed: '請求失敗，請稍後再試。'
+    requestFailed: '請求失敗，請稍後再試。',
+    available: '可用',
+    quotaInsufficient: '額度不足',
+    channelInternalError: '渠道內部錯誤',
+    autoResetAt: '自動重置時間',
+    ban: '封禁',
+    unban: '解封',
+    banned: '封禁',
+    notAvailable: '-'
   },
   en: {
     brand: 'RelayHub',
@@ -1042,7 +1097,15 @@ const dictionary = {
     quotaHint: 'Requests are blocked when either window is exhausted',
     upstreamMissing: 'Upstream key missing',
     upstreamReady: 'Upstream configured',
-    requestFailed: 'Request failed. Please try again.'
+    requestFailed: 'Request failed. Please try again.',
+    available: 'Available',
+    quotaInsufficient: 'Quota exhausted',
+    channelInternalError: 'Internal channel error',
+    autoResetAt: 'Auto reset time',
+    ban: 'Ban',
+    unban: 'Unban',
+    banned: 'Banned',
+    notAvailable: '-'
   }
 } satisfies Record<Language, Record<string, string>>;
 
@@ -1529,6 +1592,51 @@ function planProductOptionLabel(option: PlanProductOption) {
   return `${option.name} · ${option.description || option.plan.subtitle} · ${option.priceLabel}`;
 }
 
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function ChevronUpIcon() {
+  return <ChevronDown size={14} style={{ transform: 'rotate(180deg)' }} />;
+}
+
+function Tooltip({ content, children }: { content: React.ReactNode; children: React.ReactElement<any> }) {
+  const [open, setOpen] = React.useState(false);
+  const { refs, floatingStyles, context } = useFloating({
+    open,
+    onOpenChange: setOpen,
+    placement: 'top-start',
+    whileElementsMounted: autoUpdate,
+    middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 })]
+  });
+
+  const hover = useHover(context, { move: false, delay: { open: 120, close: 80 } });
+  const focus = useFocus(context);
+  const dismiss = useDismiss(context);
+  const role = useRole(context, { role: 'tooltip' });
+  const { getReferenceProps, getFloatingProps } = useInteractions([hover, focus, dismiss, role]);
+
+  const child = React.Children.only(children) as React.ReactElement<any>;
+
+  return (
+    <>
+      {React.cloneElement(child, {
+        ref: refs.setReference,
+        ...getReferenceProps(child.props)
+      })}
+      {open ? (
+        <FloatingPortal>
+          <div ref={refs.setFloating} style={floatingStyles} className="floating-tooltip" {...getFloatingProps()}>
+            {content}
+          </div>
+        </FloatingPortal>
+      ) : null}
+    </>
+  );
+}
+
 const routeTabSegments: Record<Tab, string> = {
   dashboard: 'dashboard',
   keys: 'keys',
@@ -1539,6 +1647,8 @@ const routeTabSegments: Record<Tab, string> = {
   'gift-cards': 'gift-cards',
   products: 'products',
   channels: 'channels',
+  users: 'users',
+  'user-detail': 'users',
   guide: 'guide'
 };
 
@@ -1547,11 +1657,14 @@ const routeSegmentTabs = Object.entries(routeTabSegments).reduce<Record<string, 
   return map;
 }, {});
 
-function resolveRoute(route: string): { tab: Tab; planView: PlanView } {
+function resolveRoute(route: string): { tab: Tab; planView: PlanView; userId?: string } {
   const normalizedRoute = route.replace(/^\/+/, '').replace(/\/+$/, '');
   const [segment = '', viewSegment = ''] = normalizedRoute.split('/');
   if (segment === 'taobao-claim' || segment === 'claim-code') {
     return { tab: 'orders', planView: 'billing' };
+  }
+  if (segment === 'users' && viewSegment) {
+    return { tab: 'user-detail', planView: 'billing', userId: decodeURIComponent(viewSegment) };
   }
   const tab = routeSegmentTabs[segment] || 'dashboard';
   return {
@@ -1560,19 +1673,22 @@ function resolveRoute(route: string): { tab: Tab; planView: PlanView } {
   };
 }
 
-function readHistoryRoute(): { tab: Tab; planView: PlanView } {
+function readHistoryRoute(): { tab: Tab; planView: PlanView; userId?: string } {
   const legacyHashRoute = window.location.hash.match(/^#\/(.+)/)?.[1];
   if (legacyHashRoute) return resolveRoute(legacyHashRoute);
   return resolveRoute(window.location.pathname);
 }
 
-function routeToPath(tab: Tab, planView: PlanView) {
+function routeToPath(tab: Tab, planView: PlanView, userId?: string | null) {
+  if (tab === 'user-detail' && userId) {
+    return `/users/${encodeURIComponent(userId)}`;
+  }
   const segment = routeTabSegments[tab];
   return tab === 'plans' && planView === 'change' ? `/${segment}/change` : `/${segment}`;
 }
 
-function writeHistoryRoute(tab: Tab, planView: PlanView, replace = false) {
-  const nextPath = routeToPath(tab, planView);
+function writeHistoryRoute(tab: Tab, planView: PlanView, replace = false, userId?: string | null) {
+  const nextPath = routeToPath(tab, planView, userId);
   if (!window.location.hash && window.location.pathname === nextPath) return;
   const nextUrl = `${nextPath}${window.location.search}`;
   if (replace) {
@@ -1654,6 +1770,8 @@ function getPageTitle(tab: Tab, planView: PlanView, t: Record<string, string>) {
     'gift-cards': tr(t, 'giftCardManagement', '礼品码管理'),
     products: tr(t, 'productManagement', '商品管理'),
     channels: tr(t, 'channelManagement', '渠道管理'),
+    users: tr(t, 'userCenter', '用户中心'),
+    'user-detail': tr(t, 'userDetail', '用户详情'),
     guide: t.guideTitle
   };
 
@@ -1753,6 +1871,7 @@ function App() {
   const [language, setLanguage] = React.useState<Language>('zh-CN');
   const [activeTab, setActiveTab] = React.useState<Tab>(initialRoute.tab);
   const [planView, setPlanView] = React.useState<PlanView>(initialRoute.planView);
+  const [activeUserId, setActiveUserId] = React.useState<string | null>(initialRoute.userId || null);
   const [themeMode, setThemeMode] = React.useState<ThemeMode>(() => readThemeMode());
   const [accentTheme, setAccentTheme] = React.useState<AccentTheme>(() => readAccentTheme());
   const [authToken, setAuthToken] = React.useState(localStorage.getItem('authToken') || '');
@@ -1801,12 +1920,13 @@ function App() {
   }, [load, refreshTick]);
 
   React.useEffect(() => {
-    writeHistoryRoute(activeTab, planView, true);
+    writeHistoryRoute(activeTab, planView, true, activeUserId);
 
     function syncRouteFromHistory() {
       const nextRoute = readHistoryRoute();
       setActiveTab(nextRoute.tab);
       setPlanView(nextRoute.planView);
+      setActiveUserId(nextRoute.userId || null);
       setIsNavDrawerOpen(false);
     }
 
@@ -1814,7 +1934,7 @@ function App() {
     return () => {
       window.removeEventListener('popstate', syncRouteFromHistory);
     };
-  }, [activeTab, planView]);
+  }, [activeTab, activeUserId, planView]);
 
   React.useEffect(() => {
     const applyThemeMode = () => {
@@ -1875,7 +1995,8 @@ function App() {
   }
 
   const isPlansPage = activeTab === 'plans';
-  const pageTitle = getPageTitle(activeTab, planView, t);
+  const pageTitle = activeTab === 'user-detail' ? tr(t, 'userDetail', '用户详情') : getPageTitle(activeTab, planView, t);
+  const showPageBackButton = activeTab === 'user-detail' || (activeTab === 'plans' && planView === 'change');
   const nav: NavMenuItem[] = [
     { id: 'dashboard' as const, label: t.dashboard, icon: LayoutDashboard },
     { id: 'keys' as const, label: t.keys, icon: KeyRound },
@@ -1886,22 +2007,24 @@ function App() {
     ...(data.user.role === 'admin' ? [{ id: 'gift-cards' as const, label: tr(t, 'giftCards', '礼品码'), icon: Gift }] : []),
     ...(data.user.role === 'admin' ? [{ id: 'products' as const, label: tr(t, 'productManagement', '商品管理'), icon: ShoppingBag }] : []),
     ...(data.user.role === 'admin' ? [{ id: 'channels' as const, label: tr(t, 'channelManagement', '渠道管理'), icon: Route }] : []),
+    ...(data.user.role === 'admin' ? [{ id: 'users' as const, label: tr(t, 'userCenter', '用户中心'), icon: UserRound }] : []),
     { id: 'guide' as const, label: t.guide, icon: GuideMenuIcon }
   ];
   const openMenuLabel = t.openMenu;
   const closeMenuLabel = t.closeMenu;
 
   React.useEffect(() => {
-    if ((activeTab === 'channels' || activeTab === 'gift-cards' || activeTab === 'products') && data.user.role !== 'admin') {
+    if ((activeTab === 'channels' || activeTab === 'gift-cards' || activeTab === 'products' || activeTab === 'users' || activeTab === 'user-detail') && data.user.role !== 'admin') {
       navigate('dashboard');
     }
   }, [activeTab, data.user.role]);
 
-  function navigate(tab: Tab, nextPlanView: PlanView = 'billing') {
+  function navigate(tab: Tab, nextPlanView: PlanView = 'billing', userId?: string | null) {
     setActiveTab(tab);
+    setActiveUserId(userId || null);
     setPlanView(tab === 'plans' ? nextPlanView : 'billing');
     setIsNavDrawerOpen(false);
-    writeHistoryRoute(tab, tab === 'plans' ? nextPlanView : 'billing');
+    writeHistoryRoute(tab, tab === 'plans' ? nextPlanView : 'billing', false, userId);
   }
 
   function openPlanChange() {
@@ -1999,9 +2122,25 @@ function App() {
               label={isNavDrawerOpen ? closeMenuLabel : openMenuLabel}
               onClick={() => setIsNavDrawerOpen((isOpen) => !isOpen)}
             />
-            <div className="topbar-title">
-              <h1>{pageTitle}</h1>
-            </div>
+              <div className="topbar-title">
+                {showPageBackButton ? (
+                  <button
+                    type="button"
+                    className="page-back-button"
+                    onClick={() => {
+                      if (activeTab === 'user-detail') {
+                        navigate('users');
+                        return;
+                      }
+                      navigate('plans', 'billing');
+                    }}
+                    aria-label={activeTab === 'user-detail' ? '返回用户列表' : t.returnBilling}
+                  >
+                    <ArrowLeft size={16} />
+                  </button>
+                ) : null}
+                <h1>{pageTitle}</h1>
+              </div>
           </div>
           <div className="topbar-actions">
             <LanguageMenu language={language} setLanguage={setLanguage} />
@@ -2044,6 +2183,8 @@ function App() {
           <ProductLinksPanel headers={headers} initialProductLinks={data.productLinks} refreshTick={refreshTick} t={t} />
         ) : null}
         {activeTab === 'channels' && data.user.role === 'admin' ? <ChannelsPanel headers={headers} refreshTick={refreshTick} t={t} /> : null}
+        {activeTab === 'users' && data.user.role === 'admin' ? <UsersCenterPanel headers={headers} refreshTick={refreshTick} t={t} onOpenUser={(userId) => navigate('user-detail', 'billing', userId)} /> : null}
+        {activeTab === 'user-detail' && data.user.role === 'admin' && activeUserId ? <UserDetailPanel headers={headers} userId={activeUserId} onBack={() => navigate('users')} t={t} /> : null}
         {activeTab === 'guide' ? <GuidePage t={t} /> : null}
       </main>
     </div>
@@ -4856,6 +4997,41 @@ function isPastDate(value: string | null) {
   return Number.isFinite(timestamp) && timestamp <= Date.now();
 }
 
+function upstreamKeyRuntimeStatus(key: UpstreamChannelKey) {
+  if (key.status === 'banned') return 'banned' as const;
+  if (isPastDate(key.expiresAt)) return 'expired' as const;
+  if (key.failureStatusCode === 402) return 'quota-exhausted' as const;
+  if (key.failureStatusCode === 401) return 'expired' as const;
+  if (key.failureStatusCode === 503) return 'channel-error' as const;
+  if (key.status === 'paused') return 'paused' as const;
+  if (key.status === 'revoked') return 'revoked' as const;
+  return 'available' as const;
+}
+
+function upstreamKeyStatusLabel(key: UpstreamChannelKey, t: Record<string, string>) {
+  const runtimeStatus = upstreamKeyRuntimeStatus(key);
+  if (runtimeStatus === 'banned') return tr(t, 'banned', '封禁');
+  if (runtimeStatus === 'quota-exhausted') return tr(t, 'quotaInsufficient', '额度不足');
+  if (runtimeStatus === 'channel-error') return tr(t, 'channelInternalError', '渠道内部错误');
+  if (runtimeStatus === 'expired') return tr(t, 'expired', '已过期');
+  if (runtimeStatus === 'paused') return t.pause;
+  if (runtimeStatus === 'revoked') return t.revoke;
+  return tr(t, 'available', '可用');
+}
+
+function upstreamKeyStatusClassName(key: UpstreamChannelKey) {
+  const runtimeStatus = upstreamKeyRuntimeStatus(key);
+  if (runtimeStatus === 'available') return 'status-pill success';
+  if (runtimeStatus === 'quota-exhausted') return 'status-pill warn';
+  if (runtimeStatus === 'banned') return 'status-pill danger';
+  if (runtimeStatus === 'channel-error') return 'status-pill danger';
+  return 'status-pill';
+}
+
+function upstreamKeyAutoResetDisplay(key: UpstreamChannelKey, t: Record<string, string>) {
+  return key.failureStatusCode === 402 && key.exhaustedUntil ? fullDate(key.exhaustedUntil) : t.notAvailable || '-';
+}
+
 type UpstreamKeyDeleteTarget = {
   channel: UpstreamChannel;
   key: UpstreamChannelKey;
@@ -5012,6 +5188,7 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
           name: keyName,
           key: keyValue,
           agentType: keyAgentType,
+          status: 'active',
           expiresAt: keyIsPermanent ? null : dateTimeLocalToIso(keyExpiresAt)
         })
       });
@@ -5093,6 +5270,7 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
         return;
       }
       setChannels((payload as { channels: UpstreamChannel[] }).channels || []);
+      showSuccessToast(status === 'banned' ? tr(t, 'banned', '封禁') : status === 'active' ? tr(t, 'available', '可用') : t.pause);
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
     }
@@ -5650,10 +5828,12 @@ function ChannelCard({
   onDeleteKey,
   onAddModelRate,
   onEditModelRate,
-  onDeleteModelRate
+  onDeleteModelRate,
+  selectedAgentTab: selectedAgentTabProp
 }: {
   channel: UpstreamChannel;
   t: Record<string, string>;
+  selectedAgentTab?: GuideAgentId;
   isExpanded: boolean;
   onToggle: () => void;
   onEdit: () => void;
@@ -5666,9 +5846,14 @@ function ChannelCard({
   onEditModelRate: (rate: UpstreamModelRate) => void;
   onDeleteModelRate: (rate: UpstreamModelRate) => void;
 }) {
+  const [selectedAgentTab, setSelectedAgentTab] = React.useState<UpstreamChannelAgentTab>(selectedAgentTabProp || 'claude-code');
+  const [isRatesExpanded, setIsRatesExpanded] = React.useState(true);
+  const [isKeysExpanded, setIsKeysExpanded] = React.useState(true);
   const totalKeys = channel.keyCounts.shared + channel.keyCounts['claude-code'] + channel.keyCounts.codex;
   const claudeRates = channel.modelRates.filter((rate) => rate.agentType === 'claude-code');
   const codexRates = channel.modelRates.filter((rate) => rate.agentType === 'codex');
+  const visibleKeys = channel.keys.filter((key) => key.agentType === 'shared' || key.agentType === selectedAgentTab);
+  const visibleRates = selectedAgentTab === 'claude-code' ? claudeRates : codexRates;
   return (
     <article className="channel-card">
       <div className="channel-card-head">
@@ -5694,10 +5879,6 @@ function ChannelCard({
           </p>
         </div>
         <div className="row-actions">
-          <button type="button" className="secondary-button" onClick={onAddKey}>
-            <Plus size={15} />
-            {tr(t, 'addUpstreamKey', '添加上游 Key')}
-          </button>
           <button type="button" className="secondary-button" onClick={onEdit}>
             {tr(t, 'edit', '编辑')}
           </button>
@@ -5709,12 +5890,8 @@ function ChannelCard({
 
       <div className="channel-url-grid">
         <div>
-          <span>Claude Code</span>
-          <code>{channel.claudeApiUrl}</code>
-        </div>
-        <div>
-          <span>Codex</span>
-          <code>{channel.codexApiUrl}</code>
+          <span>{selectedAgentTab === 'claude-code' ? 'Claude Code' : 'Codex'}</span>
+          <code>{selectedAgentTab === 'claude-code' ? channel.claudeApiUrl : channel.codexApiUrl}</code>
         </div>
       </div>
 
@@ -5728,23 +5905,48 @@ function ChannelCard({
 
       {isExpanded ? (
         <>
-          <div className="model-rate-section">
-            <div className="model-rate-heading">
-              <strong>{tr(t, 'modelRates', '模型计费')}</strong>
+          <div className="agent-tabs channel-inner-tabs">
+            <button type="button" className={selectedAgentTab === 'claude-code' ? 'agent-tab active' : 'agent-tab'} onClick={() => setSelectedAgentTab('claude-code')}>
+              Claude Code
+            </button>
+            <button type="button" className={selectedAgentTab === 'codex' ? 'agent-tab active' : 'agent-tab'} onClick={() => setSelectedAgentTab('codex')}>
+              Codex
+            </button>
+          </div>
+          <div className="channel-subcard">
+            <div className="channel-subcard-head">
+              <button type="button" className="channel-subcard-toggle" onClick={() => setIsRatesExpanded((value) => !value)} aria-expanded={isRatesExpanded}>
+                <ChevronDown size={16} className={isRatesExpanded ? 'rotate-icon open' : 'rotate-icon'} />
+                <strong>{tr(t, 'billingModels', '计费模型')}</strong>
+              </button>
               <button type="button" className="secondary-button" onClick={onAddModelRate}>
                 <Plus size={15} />
                 {tr(t, 'addModelRate', '新增模型计费')}
               </button>
             </div>
-            <div className="model-rate-groups">
-              <ModelRateGroup title="Claude Code" rates={claudeRates} t={t} onEdit={onEditModelRate} onDelete={onDeleteModelRate} />
-              <ModelRateGroup title="Codex" rates={codexRates} t={t} onEdit={onEditModelRate} onDelete={onDeleteModelRate} />
-            </div>
+            {isRatesExpanded ? (
+              <div className="model-rate-section">
+                <div className="model-rate-groups">
+                  <ModelRateGroup title={selectedAgentTab === 'claude-code' ? 'Claude Code' : 'Codex'} rates={visibleRates} t={t} onEdit={onEditModelRate} onDelete={onDeleteModelRate} />
+                </div>
+              </div>
+            ) : null}
           </div>
-          {channel.keys.length ? (
+          <div className="channel-subcard">
+            <div className="channel-subcard-head">
+              <button type="button" className="channel-subcard-toggle" onClick={() => setIsKeysExpanded((value) => !value)} aria-expanded={isKeysExpanded}>
+                <ChevronDown size={16} className={isKeysExpanded ? 'rotate-icon open' : 'rotate-icon'} />
+                <strong>API Key</strong>
+              </button>
+              <button type="button" className="secondary-button" onClick={onAddKey}>
+                <Plus size={15} />
+                {tr(t, 'addUpstreamKey', '添加上游 Key')}
+              </button>
+            </div>
+            {isKeysExpanded ? (
+              visibleKeys.length ? (
           <div className="upstream-key-list">
-            {channel.keys.map((key) => {
-              const isExpired = isPastDate(key.expiresAt);
+            {visibleKeys.map((key) => {
               return (
                 <div className="upstream-key-row" key={key.id}>
                   <div>
@@ -5752,26 +5954,27 @@ function ChannelCard({
                     <strong>{key.keyPreview}</strong>
                     <span>{agentTypeLabel(key.agentType)}</span>
                   </div>
-                  <span className={key.status === 'active' && !isExpired ? 'status-code ok' : 'status-code error'}>
-                    {isExpired ? tr(t, 'expired', '已过期') : key.status === 'active' ? tr(t, 'active', '启用') : key.status === 'paused' ? t.pause : t.revoke}
-                  </span>
+                  <span className={upstreamKeyStatusClassName(key)}>{upstreamKeyStatusLabel(key, t)}</span>
                   <div className="upstream-key-meta">
                     <span>
                       {tr(t, 'keyExpiresAt', '到期时间')}: {key.expiresAt ? displayDateTime(key.expiresAt) : tr(t, 'permanentKey', '永久有效')}
                     </span>
-                    <span>{key.exhaustedUntil ? `${tr(t, 'recoverAt', '恢复于')} ${fullDate(key.exhaustedUntil)}` : key.lastUsedAt ? fullDate(key.lastUsedAt) : t.never}</span>
+                    <span>{tr(t, 'autoResetAt', '自动重置时间')}: {upstreamKeyAutoResetDisplay(key, t)}</span>
+                    <span>{key.failureReason || (key.lastUsedAt ? fullDate(key.lastUsedAt) : t.never)}</span>
                   </div>
                   <div className="row-actions">
                     <button type="button" className="secondary-button" onClick={() => onEditKey(key)}>
                       {tr(t, 'edit', '编辑')}
                     </button>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => onKeyStatus(key, key.status === 'active' ? 'paused' : 'active')}
-                    >
-                      {key.status === 'active' ? t.pause : t.resume}
-                    </button>
+                    {key.status === 'banned' ? (
+                      <button type="button" className="secondary-button" onClick={() => onKeyStatus(key, 'active')}>
+                        {tr(t, 'unban', '解封')}
+                      </button>
+                    ) : (
+                      <button type="button" className="secondary-button" onClick={() => onKeyStatus(key, 'banned')}>
+                        {tr(t, 'ban', '封禁')}
+                      </button>
+                    )}
                     <button type="button" className="icon-button danger" onClick={() => onDeleteKey(key)} title={t.delete}>
                       <Trash2 size={16} />
                     </button>
@@ -5780,9 +5983,11 @@ function ChannelCard({
               );
             })}
           </div>
-          ) : (
-            <Empty t={t} />
-          )}
+              ) : (
+                <Empty t={t} />
+              )
+            ) : null}
+          </div>
         </>
       ) : null}
       {channel.degradedReason ? <p className="channel-failure">{channel.degradedReason}</p> : null}
@@ -5949,7 +6154,6 @@ function PlansPanel({
         <PlanChangePage
           currentPlanId={data.account.currentPlanId || undefined}
           openPurchaseDialog={setPurchaseTarget}
-          setView={setView}
           t={t}
         />
         {purchaseTarget ? (
@@ -6050,23 +6254,14 @@ function PlansPanel({
 function PlanChangePage({
   currentPlanId,
   openPurchaseDialog,
-  setView,
   t
 }: {
   currentPlanId?: string;
   openPurchaseDialog: (plan: UpgradePlan) => void;
-  setView: (view: PlanView) => void;
   t: Record<string, string>;
 }) {
   return (
     <section className="upgrade-page">
-      <header className="upgrade-topbar">
-        <button type="button" className="upgrade-link-button" onClick={() => setView('billing')}>
-          <ArrowLeft size={15} />
-          {t.returnBilling}
-        </button>
-      </header>
-
       <section className="upgrade-hero">
         <p>{t.upgradeEyebrow}</p>
         <h1>
@@ -6366,11 +6561,16 @@ function GiftCardConfirmModal({
 }
 
 function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers: HeadersInit; refreshTick: number; t: Record<string, string> }) {
+  const [tab, setTab] = React.useState<'usage' | 'claims' | 'redemptions'>('usage');
   const [status, setStatus] = React.useState<LogStatus>('all');
   const [apiKeyId, setApiKeyId] = React.useState('all');
   const [range, setRange] = React.useState<LogRange>('24h');
-  const [page, setPage] = React.useState(1);
+  const [usagePage, setUsagePage] = React.useState(1);
+  const [claimsPage, setClaimsPage] = React.useState(1);
+  const [redemptionsPage, setRedemptionsPage] = React.useState(1);
   const [logPage, setLogPage] = React.useState<LogPage>({ logs: [], total: 0, page: 1, pageSize: 20 });
+  const [claimPage, setClaimPage] = React.useState<Paginated<{ orders: ClaimedOrder[] }>>({ orders: [], total: 0, page: 1, pageSize: 20 });
+  const [redemptionPage, setRedemptionPage] = React.useState<GiftCardRedemptionPage>({ giftCards: [], total: 0, page: 1, pageSize: 20, days: 30 });
   const [loading, setLoading] = React.useState(false);
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const pageCount = Math.max(1, Math.ceil(logPage.total / logPage.pageSize));
@@ -6378,27 +6578,39 @@ function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers:
   const loadLogs = React.useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        page: String(page),
-        pageSize: String(logPage.pageSize),
-        status,
-        range
-      });
-      if (apiKeyId !== 'all') params.set('apiKeyId', apiKeyId);
-      const response = await fetch(`/api/user/logs?${params.toString()}`, { headers });
+      const currentPage = tab === 'usage' ? usagePage : tab === 'claims' ? claimsPage : redemptionsPage;
+      const params = new URLSearchParams({ page: String(currentPage) });
+      let response: Response;
+      if (tab === 'usage') {
+        params.set('pageSize', String(logPage.pageSize));
+        params.set('status', status);
+        params.set('range', range);
+        if (apiKeyId !== 'all') params.set('apiKeyId', apiKeyId);
+        response = await fetch(`/api/user/logs?${params.toString()}`, { headers });
+      } else if (tab === 'claims') {
+        params.set('pageSize', String(claimPage.pageSize));
+        params.set('days', '30');
+        response = await fetch(`/api/user/orders/claims?${params.toString()}`, { headers });
+      } else {
+        params.set('pageSize', String(redemptionPage.pageSize));
+        params.set('days', '30');
+        response = await fetch(`/api/user/gift-card-redemptions?${params.toString()}`, { headers });
+      }
       const payload = await readJsonResponse(response);
       if (!response.ok) {
         showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
         return;
       }
-      setLogPage(payload as LogPage);
+      if (tab === 'usage') setLogPage(payload as LogPage);
+      if (tab === 'claims') setClaimPage(payload as Paginated<{ orders: ClaimedOrder[] }>);
+      if (tab === 'redemptions') setRedemptionPage(payload as GiftCardRedemptionPage);
       setExpandedId(null);
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
     } finally {
       setLoading(false);
     }
-  }, [apiKeyId, headers, logPage.pageSize, page, range, status, t.requestFailed]);
+  }, [apiKeyId, claimsPage, headers, claimPage.pageSize, logPage.pageSize, range, redemptionPage.pageSize, redemptionsPage, status, t.requestFailed, tab, usagePage]);
 
   React.useEffect(() => {
     void loadLogs();
@@ -6406,22 +6618,32 @@ function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers:
 
   function updateStatus(value: LogStatus) {
     setStatus(value);
-    setPage(1);
+    setUsagePage(1);
   }
 
   function updateApiKey(value: string) {
     setApiKeyId(value);
-    setPage(1);
+    setUsagePage(1);
   }
 
   function updateRange(value: LogRange) {
     setRange(value);
-    setPage(1);
+    setUsagePage(1);
   }
 
   return (
     <section className="content-grid">
       <div className="log-filters">
+        <label>
+          日志类型
+          <select value={tab} onChange={(event) => { setTab(event.target.value as any); }}>
+            <option value="usage">消费日志</option>
+            <option value="claims">礼品码记录</option>
+            <option value="redemptions">兑换记录</option>
+          </select>
+        </label>
+        {tab === 'usage' ? (
+          <>
         <label>
           {t.logKey}
           <select value={apiKeyId} onChange={(event) => updateApiKey(event.target.value)}>
@@ -6450,36 +6672,250 @@ function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers:
             <option value="30d">{t.last30Days}</option>
           </select>
         </label>
+          </>
+        ) : null}
       </div>
       <section className="table-panel">
         {loading ? <div className="loading-line" /> : null}
-        <LogRows logs={logPage.logs} t={t} expandedId={expandedId} setExpandedId={setExpandedId} />
-        <div className="pagination-bar">
-          <span>{t.logTotal.replace('{total}', String(logPage.total))}</span>
+        {tab === 'usage' ? <LogRows logs={logPage.logs} t={t} expandedId={expandedId} setExpandedId={setExpandedId} /> : null}
+        {tab === 'claims' ? <OrdersTable orders={claimPage.orders} /> : null}
+        {tab === 'redemptions' ? <GiftRedemptionTable giftCards={redemptionPage.giftCards} /> : null}
+        {tab === 'usage' ? <PaginationBar page={usagePage} pageSize={logPage.pageSize} total={logPage.total} onPageChange={setUsagePage} /> : null}
+        {tab === 'claims' ? <PaginationBar page={claimsPage} pageSize={claimPage.pageSize} total={claimPage.total} onPageChange={setClaimsPage} /> : null}
+        {tab === 'redemptions' ? <PaginationBar page={redemptionsPage} pageSize={redemptionPage.pageSize} total={redemptionPage.total} onPageChange={setRedemptionsPage} /> : null}
+      </section>
+    </section>
+  );
+}
+
+function OrdersTable({ orders }: { orders: ClaimedOrder[] }) {
+  if (!orders.length) return <div className="table-empty">暂无记录</div>;
+  return (
+    <div className="gift-card-table">
+      <div className="gift-card-table-head">
+        <span>ID</span>
+        <span>商品</span>
+        <span>礼品码</span>
+        <span>状态</span>
+        <span>领取时间</span>
+      </div>
+      {orders.map((order) => (
+        <article className="gift-card-row" key={`${order.orderId}-${order.subOrderId || ''}`}>
+          <code>{order.orderId}{order.subOrderId ? `/${order.subOrderId}` : ''}</code>
+          <span>{order.title}</span>
+          <code>{order.giftCardCode || '-'}</code>
+          <span>{order.deliveryStatus}</span>
+          <span>{order.claimedAt ? formatDateTime(order.claimedAt) : '-'}</span>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function GiftRedemptionTable({ giftCards }: { giftCards: GiftCardCard[] }) {
+  if (!giftCards.length) return <div className="table-empty">暂无记录</div>;
+  return (
+    <div className="gift-card-table">
+      <div className="gift-card-table-head">
+        <span>兑换码</span>
+        <span>类型</span>
+        <span>套餐/额度</span>
+        <span>兑换用户</span>
+        <span>兑换时间</span>
+      </div>
+      {giftCards.map((card) => (
+        <article className="gift-card-row" key={card.code}>
+          <code>{card.code}</code>
+          <span>{card.type === 'plan' ? '套餐' : '余额'}</span>
+          <span>{card.type === 'plan' ? `${card.planName || '-'} / ${card.durationMonths}月` : currency(card.amountCents, 'USD')}</span>
+          <span>{card.redeemedByEmail || card.redeemedByUserId || '-'}</span>
+          <span>{card.redeemedAt ? formatDateTime(card.redeemedAt) : '-'}</span>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function PaginationBar({ page, pageSize, total, onPageChange }: { page: number; pageSize: number; total: number; onPageChange: (page: number) => void }) {
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  return (
+    <div className="pagination-bar">
+      <span>共 {total} 条</span>
+      <div>
+        <button type="button" className="icon-button compact" onClick={() => onPageChange(page - 1)} disabled={page <= 1}>
+          <ChevronLeft size={16} />
+        </button>
+        <strong>{page} / {pageCount}</strong>
+        <button type="button" className="icon-button compact" onClick={() => onPageChange(page + 1)} disabled={page >= pageCount}>
+          <ChevronRight size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function UsersCenterPanel({ headers, refreshTick, t, onOpenUser }: { headers: HeadersInit; refreshTick: number; t: Record<string, string>; onOpenUser: (userId: string) => void }) {
+  const [search, setSearch] = React.useState('');
+  const [query, setQuery] = React.useState('');
+  const [sortField, setSortField] = React.useState<'freeCreditCents' | 'createdAt'>('createdAt');
+  const [sortOrder, setSortOrder] = React.useState<'asc' | 'desc'>('desc');
+  const [page, setPage] = React.useState(1);
+  const [pageData, setPageData] = React.useState<UserListPage>({ users: [], total: 0, page: 1, pageSize: 20, sortField: 'createdAt', sortOrder: 'desc' });
+
+  const loadUsers = React.useCallback(async () => {
+    const params = new URLSearchParams({ page: String(page), pageSize: String(pageData.pageSize), sortField, sortOrder });
+    if (query.trim()) params.set('search', query.trim());
+    const response = await fetch(`/api/admin/users?${params.toString()}`, { headers });
+    const payload = await readJsonResponse(response);
+    if (!response.ok) {
+      showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+      return;
+    }
+    setPageData(payload as UserListPage);
+  }, [headers, page, pageData.pageSize, query, sortField, sortOrder, t.requestFailed]);
+
+  React.useEffect(() => { void loadUsers(); }, [loadUsers, refreshTick]);
+
+  function toggleSort(field: 'freeCreditCents' | 'createdAt') {
+    if (sortField === field) {
+      setSortOrder((value) => (value === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setSortField(field);
+      setSortOrder('desc');
+    }
+    setPage(1);
+  }
+
+  function SortableHeader({ field, label }: { field: 'freeCreditCents' | 'createdAt'; label: string }) {
+    const active = sortField === field;
+    return (
+      <button
+        type="button"
+        className={active ? 'users-sort-button active' : 'users-sort-button'}
+        onClick={() => toggleSort(field)}
+        title={`${label}${active ? (sortOrder === 'desc' ? '（当前降序）' : '（当前升序）') : ''}`}
+      >
+        <span>{label}</span>
+        {active ? (
+          sortOrder === 'desc' ? <ChevronDown size={14} /> : <ChevronUpIcon />
+        ) : (
+          <ChevronsUpDown size={14} />
+        )}
+      </button>
+    );
+  }
+
+  return (
+    <section className="content-grid">
+      <section className="table-panel">
+        <div className="log-filters">
+          <label>
+            搜索
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ID / 用户名 / 邮箱" />
+          </label>
+          <button type="button" className="secondary-button" onClick={() => { setQuery(search); setPage(1); }}>搜索</button>
+        </div>
+        <div className="users-table">
+          <div className="users-table-head">
+            <span>ID</span>
+            <span>用户名</span>
+            <span>邮箱</span>
+            <span>当前套餐</span>
+            <SortableHeader field="freeCreditCents" label="自由额度" />
+            <span>套餐到期</span>
+            <SortableHeader field="createdAt" label="创建时间" />
+          </div>
+          {pageData.users.map((user) => (
+            <article className="users-table-row" key={user.id}>
+              <code className="users-table-code">{user.id}</code>
+              <Tooltip content={user.displayName || '-'}>
+                <button type="button" className="link-button users-table-link" onClick={() => onOpenUser(user.id)}>
+                  <span className="users-table-link-text">{user.displayName || '-'}</span>
+                </button>
+              </Tooltip>
+              <Tooltip content={user.email}>
+                <button type="button" className="link-button users-table-link" onClick={() => onOpenUser(user.id)}>
+                  <span className="users-table-link-text">{user.email}</span>
+                </button>
+              </Tooltip>
+              <span className="users-table-cell">{user.currentPlanName || '-'}</span>
+              <span className="users-table-cell users-table-cell-strong">{currency(user.freeCreditCents, 'USD')}</span>
+              <span className="users-table-cell">{user.planExpiresAt ? formatDateTime(user.planExpiresAt) : '-'}</span>
+              <span className="users-table-cell">{formatDateTime(user.createdAt)}</span>
+            </article>
+          ))}
+        </div>
+        <PaginationBar page={pageData.page} pageSize={pageData.pageSize} total={pageData.total} onPageChange={setPage} />
+      </section>
+    </section>
+  );
+}
+
+function UserDetailPanel({ headers, userId, onBack, t }: { headers: HeadersInit; userId: string; onBack: () => void; t: Record<string, string> }) {
+  const [user, setUser] = React.useState<UserListItem | null>(null);
+  const [tab, setTab] = React.useState<'logs' | 'claims' | 'redemptions'>('logs');
+  const [logs, setLogs] = React.useState<LogPage>({ logs: [], total: 0, page: 1, pageSize: 20 });
+  const [claims, setClaims] = React.useState<Paginated<{ orders: ClaimedOrder[] }>>({ orders: [], total: 0, page: 1, pageSize: 20 });
+  const [redemptions, setRedemptions] = React.useState<GiftCardRedemptionPage>({ giftCards: [], total: 0, page: 1, pageSize: 20, days: 30 });
+  const [expandedId, setExpandedId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    void (async () => {
+      const response = await fetch(`/api/admin/users/${userId}`, { headers });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setUser((payload as { user: UserListItem }).user);
+    })();
+  }, [headers, userId, t.requestFailed]);
+
+  React.useEffect(() => {
+    setLogs((value) => ({ ...value, page: 1 }));
+    setClaims((value) => ({ ...value, page: 1 }));
+    setRedemptions((value) => ({ ...value, page: 1 }));
+  }, [userId]);
+
+  React.useEffect(() => {
+    void (async () => {
+      const endpoint = tab === 'logs'
+        ? `/api/admin/users/${userId}/logs?page=${logs.page}&pageSize=${logs.pageSize}&range=30d`
+        : tab === 'claims'
+          ? `/api/admin/users/${userId}/order-claims?page=${claims.page}&pageSize=${claims.pageSize}&days=30`
+          : `/api/admin/users/${userId}/gift-card-redemptions?page=${redemptions.page}&pageSize=${redemptions.pageSize}&days=30`;
+      const response = await fetch(endpoint, { headers });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      if (tab === 'logs') setLogs(payload as LogPage);
+      if (tab === 'claims') setClaims(payload as Paginated<{ orders: ClaimedOrder[] }>);
+      if (tab === 'redemptions') setRedemptions(payload as GiftCardRedemptionPage);
+    })();
+  }, [claims.page, claims.pageSize, headers, logs.page, logs.pageSize, redemptions.page, redemptions.pageSize, tab, t.requestFailed, userId]);
+
+  return (
+    <section className="content-grid">
+      <section className="table-panel">
+        <div className="panel-head panel-head-detail">
           <div>
-            <button
-              type="button"
-              className="icon-button compact"
-              onClick={() => setPage((value) => value - 1)}
-              disabled={page <= 1}
-              title={t.previousPage}
-            >
-              <ChevronLeft size={16} />
-            </button>
-            <strong>
-              {page} / {pageCount}
-            </strong>
-            <button
-              type="button"
-              className="icon-button compact"
-              onClick={() => setPage((value) => value + 1)}
-              disabled={page >= pageCount}
-              title={t.nextPage}
-            >
-              <ChevronRight size={16} />
-            </button>
+            <h3>{user?.displayName || user?.email || userId}</h3>
+            <p>{user?.email || ''} · {user?.currentPlanName || '-'} · 自由额度 {user ? currency(user.freeCreditCents, 'USD') : '-'}</p>
           </div>
         </div>
+        <div className="segmented-tabs">
+          <button type="button" className={tab === 'logs' ? 'segmented-tab active' : 'segmented-tab'} onClick={() => { setTab('logs'); setLogs((value) => ({ ...value, page: 1 })); }}>30天使用日志</button>
+          <button type="button" className={tab === 'claims' ? 'segmented-tab active' : 'segmented-tab'} onClick={() => { setTab('claims'); setClaims((value) => ({ ...value, page: 1 })); }}>礼品码领取记录</button>
+          <button type="button" className={tab === 'redemptions' ? 'segmented-tab active' : 'segmented-tab'} onClick={() => { setTab('redemptions'); setRedemptions((value) => ({ ...value, page: 1 })); }}>礼品码兑换记录</button>
+        </div>
+        {tab === 'logs' ? <LogRows logs={logs.logs} t={t} expandedId={expandedId} setExpandedId={setExpandedId} /> : null}
+        {tab === 'claims' ? <OrdersTable orders={claims.orders} /> : null}
+        {tab === 'redemptions' ? <GiftRedemptionTable giftCards={redemptions.giftCards} /> : null}
+        {tab === 'logs' ? <PaginationBar page={logs.page} pageSize={logs.pageSize} total={logs.total} onPageChange={(next) => setLogs((value) => ({ ...value, page: next }))} /> : null}
+        {tab === 'claims' ? <PaginationBar page={claims.page} pageSize={claims.pageSize} total={claims.total} onPageChange={(next) => setClaims((value) => ({ ...value, page: next }))} /> : null}
+        {tab === 'redemptions' ? <PaginationBar page={redemptions.page} pageSize={redemptions.pageSize} total={redemptions.total} onPageChange={(next) => setRedemptions((value) => ({ ...value, page: next }))} /> : null}
       </section>
     </section>
   );

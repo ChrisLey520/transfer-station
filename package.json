@@ -33,6 +33,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@floating-ui/react": "^0.27.19",
     "@vitejs/plugin-react": "^5.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
