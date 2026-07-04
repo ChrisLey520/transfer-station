@@ -80,11 +80,11 @@ preferred_auth_method = "apikey"
 
 [model_providers.freemodel]
 name = "freemodel"
-base_url = "https://api.freemodel.dev"
+base_url = "https://relayhub.chrisley.site/codex/v1"
 wire_api = "responses"
 ```
 
-以上配置请原样粘贴，不要修改任何值。
+以上配置已使用 RelayHub 的正式访问地址，其余配置保持不变。
 
 ## 步骤 05：重启终端并验证安装
 

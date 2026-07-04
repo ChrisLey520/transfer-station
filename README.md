@@ -27,15 +27,15 @@ API 中转服务：
 http://localhost:8787
 ```
 
-## Environment
-
-在 `.env` 中配置上游 Anthropic API Key：
+淘宝消息 worker：
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-your-upstream-key
-ANTHROPIC_BASE_URL=https://api.anthropic.com
-ANTHROPIC_VERSION=2023-06-01
+pnpm run dev:taobao-worker
 ```
+
+## Environment
+
+上游渠道、Claude Code / Codex API URL、上游 API Key 和计费倍率都在管理员渠道页维护。`.env` 只需要保留端口、数据库、管理员等运行配置。
 
 可选管理保护：
 
@@ -46,31 +46,79 @@ ADMIN_EMAILS=demo@example.com
 
 普通用户注册后身份为会员。`ADMIN_EMAILS` 中的邮箱会在启动时标记为管理员，内置演示账号 `demo@example.com / demo123456` 默认为管理员。管理台 API 支持管理员登录态访问，也兼容设置 `ADMIN_TOKEN` 后使用 `x-admin-token` 访问。
 
-## Claude Code Proxy Endpoint
+淘宝自动发码需要额外配置：
 
-中转入口兼容 Anthropic Messages API：
-
-```text
-POST http://localhost:8787/v1/messages
+```bash
+TAOBAO_APP_KEY=your-taobao-app-key
+TAOBAO_APP_SECRET=your-taobao-app-secret
+TAOBAO_TMC_GROUP=your-tmc-group
+TAOBAO_REDIRECT_URI=https://your-domain.example.com/api/taobao/oauth/callback
+TAOBAO_OAUTH_STATE=your-random-state
 ```
 
-客户端使用管理台创建的 `ccx_...` 密钥访问中转站，中转站再使用 `.env` 里的 `ANTHROPIC_API_KEY` 访问上游。
+可选项：
+
+```bash
+TAOBAO_TMC_INTERVAL_MS=5000
+TAOBAO_TMC_QUANTITY=10
+TAOBAO_TOP_ENDPOINT=https://eco.taobao.com/router/rest
+TAOBAO_TOKEN_ENDPOINT=https://oauth.taobao.com/token
+```
+
+## Taobao Auto Gift Codes
+
+淘宝优先使用 TMC 消息通知触发发码，不依赖定时扫描订单。基本流程：
+
+1. 在淘宝开放平台准备应用，开通交易消息相关能力，并配置回调地址 `/api/taobao/oauth/callback`。
+2. 在管理台「礼品码」页面的「淘宝自动发码」区域保存店铺 Session，或通过 OAuth 回调写入店铺授权。
+3. 点击「开通 TMC」，调用 `taobao.tmc.user.permit` 为店铺开通消息服务。
+4. 配置淘宝商品 ID / SKU ID 到礼品卡类型的映射，可选择套餐礼品卡或余额礼品卡。
+5. 启动 `pnpm run dev:taobao-worker`（生产环境用 `pnpm run start:taobao-worker`）消费 TMC 消息；Kubernetes 样例已把 worker 作为 sidecar 容器启动。
+6. 买家付款后，worker 拉取订单详情并自动生成兑换码；买家登录后可在 `/orders` 的「我的订单」输入订单号领取。
+
+当前实现不主动通过旺旺/客服消息发送动态兑换码，因为这类能力通常需要额外类目、客服或消息权限。先用「我的订单」取码完成闭环，后续拿到权限后可以在订单生成后扩展自动回复通道。
+
+## Proxy Endpoints
+
+Claude Code 和 Codex 使用各自的专用入口：
+
+```text
+POST http://localhost:8787/claude-code/v1/messages
+POST http://localhost:8787/codex/v1/responses
+```
+
+客户端使用管理台创建的 `ccx_...` 密钥访问中转站，中转站会按 Agent 类型智能调度到对应上游渠道和上游 API Key。
 
 示例：
 
 ```bash
-curl http://localhost:8787/v1/messages \
+curl http://localhost:8787/claude-code/v1/messages \
   -H "content-type: application/json" \
   -H "x-api-key: ccx_your_transfer_station_key" \
   -H "anthropic-version: 2023-06-01" \
   -d '{
-    "model": "claude-sonnet-4-5",
+    "model": "claude-sonnet-4-6",
     "max_tokens": 256,
     "messages": [
       { "role": "user", "content": "hello" }
     ]
   }'
 ```
+
+当前 Claude 系列模型示例：
+
+- Sonnet: `claude-sonnet-4-6`
+- Opus: `claude-opus-4-8`
+- Haiku: `claude-haiku-4-5`
+
+健康检查端点：
+
+```text
+GET http://localhost:8787/claude-code/v1/key/health
+GET http://localhost:8787/codex/v1/key/health
+```
+
+健康检查会用当前中转 Key 鉴权，然后由中转站向上游发送固定的极短探测消息 `Reply OK.`。任一可用上游渠道能返回正常模型回复即视为健康；所有上游渠道都失败或无文本回复时返回不健康。探测请求限制最大输出 Token 为 8，且不写入用户用量日志。
 
 ## Quota Model
 

