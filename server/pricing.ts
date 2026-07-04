@@ -12,6 +12,14 @@ export type UsageRates = {
   cacheReadPerMillion?: number;
 };
 
+type UsageCostBreakdown = {
+  inputCostCents: number;
+  outputCostCents: number;
+  cacheCreationCostCents: number;
+  cacheReadCostCents: number;
+  totalCostCents: number;
+};
+
 const defaultRates = {
   inputPerMillion: 3,
   outputPerMillion: 15,
@@ -34,11 +42,21 @@ export function usageCostCents(usage: UsageCostInput, rates: UsageRates = {}) {
   );
   const cacheReadCostCents = centsForTokens(usage.cacheReadInputTokens || 0, effectiveRates.cacheReadPerMillion);
 
-  return {
+  return applyMinimumRequestCost({
     inputCostCents,
     outputCostCents,
     cacheCreationCostCents,
     cacheReadCostCents,
     totalCostCents: inputCostCents + outputCostCents + cacheCreationCostCents + cacheReadCostCents
+  });
+}
+
+function applyMinimumRequestCost(costs: UsageCostBreakdown): UsageCostBreakdown {
+  if (costs.totalCostCents > 0) return costs;
+
+  return {
+    ...costs,
+    inputCostCents: 1,
+    totalCostCents: 1
   };
 }

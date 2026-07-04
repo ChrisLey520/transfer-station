@@ -904,6 +904,32 @@ async function probeKeyHealth(key: KeyWithPlan, agent: AgentType) {
     };
   }
 
+  if (!quotaCheck.ok) {
+    return {
+      ok: false,
+      status: 'quota_exceeded',
+      message: quotaCheck.message,
+      upstreamConfigured: upstreamConfigured(),
+      key: {
+        id: key.id,
+        name: key.name,
+        preview: key.keyPreview,
+        status: key.status
+      },
+      probe: {
+        agent,
+        model: spec.model,
+        promptTokenBudget: 'fixed-minimal',
+        maxOutputTokens: healthProbeMaxOutputTokens,
+        attempts
+      },
+      quota: quotaCheck.quota,
+      quotaOk: quotaCheck.ok,
+      now: new Date().toISOString(),
+      statusCode: quotaCheck.statusCode
+    };
+  }
+
   for (const selection of selections) {
     const attemptStartedAt = Date.now();
     const controller = new AbortController();
@@ -1416,6 +1442,25 @@ app.post('/api/taobao/shops', adminGuard, (req, res) => {
   res.status(201).json({ shop, shops: listTaobaoShops() });
 });
 
+app.get('/api/taobao/oauth/start', adminGuard, (_req, res) => {
+  const appKey = process.env.TAOBAO_APP_KEY?.trim();
+  const redirectUri = process.env.TAOBAO_REDIRECT_URI?.trim();
+  const state = (process.env.TAOBAO_OAUTH_STATE || process.env.ADMIN_TOKEN || '').trim();
+
+  if (!appKey || !redirectUri || !state) {
+    res.status(400).json({ error: '缺少淘宝 OAuth 配置，请检查 TAOBAO_APP_KEY、TAOBAO_REDIRECT_URI、TAOBAO_OAUTH_STATE。' });
+    return;
+  }
+
+  const authorizeUrl = new URL('https://oauth.taobao.com/authorize');
+  authorizeUrl.searchParams.set('response_type', 'code');
+  authorizeUrl.searchParams.set('client_id', appKey);
+  authorizeUrl.searchParams.set('redirect_uri', redirectUri);
+  authorizeUrl.searchParams.set('state', state);
+
+  res.json({ authorizeUrl: authorizeUrl.toString() });
+});
+
 app.get('/api/taobao/oauth/callback', async (req, res) => {
   const schema = z.object({
     code: z.string().min(1),
@@ -1435,15 +1480,19 @@ app.get('/api/taobao/oauth/callback', async (req, res) => {
 
   try {
     const token = await exchangeTaobaoAuthCode(parsed.data.code, process.env.TAOBAO_REDIRECT_URI);
-    const shop = saveTaobaoShop({
+    const savedShop = saveTaobaoShop({
       id: String(token.taobao_user_id || token.taobao_user_nick || 'default'),
       nick: token.taobao_user_nick || '',
       sessionCiphertext: encryptKey(token.access_token),
       sessionExpiresAt: token.expires_in ? new Date(Date.now() + token.expires_in * 1000).toISOString() : null
     });
-    res.json({ ok: true, shop });
+    const title = encodeURIComponent('淘宝店铺授权成功');
+    const savedShopLabel = savedShop ? (savedShop.nick || savedShop.id) : String(token.taobao_user_nick || token.taobao_user_id || 'default');
+    const detail = encodeURIComponent(`已保存店铺 ${savedShopLabel} 的授权信息，请返回管理台刷新查看。`);
+    res.type('html').send(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" /><title>淘宝授权成功</title><meta name="viewport" content="width=device-width, initial-scale=1" /></head><body><script>try{window.opener?.postMessage({type:'taobao-oauth-complete',ok:true,title:decodeURIComponent('${title}'),detail:decodeURIComponent('${detail}')},window.location.origin);}catch(e){}window.close();</script><p>淘宝授权成功，正在返回管理台…</p></body></html>`);
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : '淘宝授权失败。' });
+    const message = encodeURIComponent(error instanceof Error ? error.message : '淘宝授权失败。');
+    res.status(400).type('html').send(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" /><title>淘宝授权失败</title><meta name="viewport" content="width=device-width, initial-scale=1" /></head><body><script>try{window.opener?.postMessage({type:'taobao-oauth-complete',ok:false,title:'淘宝店铺授权失败',detail:decodeURIComponent('${message}')},window.location.origin);}catch(e){}window.close();</script><p>淘宝授权失败，请返回管理台重试。</p></body></html>`);
   }
 });
 
@@ -2155,7 +2204,15 @@ for (const prefix of ['/claude-code/v1', '/codex/v1']) {
     if (!key) return;
     const agent: AgentType = prefix.startsWith('/codex') ? 'codex' : 'claude-code';
     void probeKeyHealth(key, agent)
-      .then((health) => res.status(health.ok ? 200 : 503).json(health))
+      .then((health) => {
+        const statusCode =
+          typeof (health as { statusCode?: unknown }).statusCode === 'number'
+            ? ((health as { statusCode: number }).statusCode || 503)
+            : health.ok
+              ? 200
+              : 503;
+        res.status(statusCode).json(health);
+      })
       .catch((error) => {
         res.status(503).json({
           ok: false,
