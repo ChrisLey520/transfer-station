@@ -21,7 +21,8 @@
     "build": "tsc --noEmit && vite build",
     "start": "NODE_ENV=production tsx server/index.ts",
     "start:taobao-worker": "NODE_ENV=production tsx server/taobao-worker.ts",
-    "seed": "tsx server/seed.ts"
+    "seed": "tsx server/seed.ts",
+    "simulate:codex-billing": "node scripts/simulate-codex-billing.mjs"
   },
   "keywords": [
     "claude",
