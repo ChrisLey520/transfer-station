@@ -104,7 +104,7 @@ export type UpstreamChannelKey = {
   keyHash: string;
   keyPreview: string;
   keyCiphertext: string;
-  status: 'active' | 'paused' | 'revoked';
+  status: 'active' | 'paused' | 'revoked' | 'banned';
   sortOrder: number;
   expiresAt: string | null;
   exhaustedUntil: string | null;

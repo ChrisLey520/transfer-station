@@ -59,6 +59,7 @@ type UsageLogQuery = {
   apiKeyId?: string;
   range?: LogRange;
   userId?: string;
+  ignoreRange?: boolean;
 };
 
 type AccountState = {
@@ -876,6 +877,117 @@ export function loginUser(input: { email: string; password: string }) {
 export function getUserById(userId: string): User | null {
   const row = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   return row ? toPublicUser(row) : null;
+}
+
+type UserListSortField = 'freeCreditCents' | 'createdAt';
+type SortOrder = 'asc' | 'desc';
+
+type UserListQuery = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  sortField?: UserListSortField;
+  sortOrder?: SortOrder;
+};
+
+type UserListItem = User & {
+  currentPlanId: string | null;
+  currentPlanName: string | null;
+  freeCreditCents: number;
+  planExpiresAt: string | null;
+};
+
+function mapUserListItem(row: any): UserListItem {
+  return {
+    ...mapUser(row),
+    currentPlanId: row.current_plan_id ?? null,
+    currentPlanName: row.current_plan_name ?? null,
+    freeCreditCents: Number(row.free_credit_cents ?? 0),
+    planExpiresAt: row.plan_expires_at ?? null
+  };
+}
+
+export function listUsers(input: UserListQuery = {}) {
+  const page = Math.max(1, Math.floor(input.page || 1));
+  const pageSize = Math.min(Math.max(1, Math.floor(input.pageSize || 20)), 100);
+  const params: Record<string, string | number> = {
+    limit: pageSize,
+    offset: (page - 1) * pageSize
+  };
+  const filters: string[] = [];
+
+  if (input.search?.trim()) {
+    const keyword = `%${input.search.trim().toLowerCase()}%`;
+    filters.push(`(
+      lower(users.id) LIKE @search OR
+      lower(users.email) LIKE @search OR
+      lower(COALESCE(users.display_name, '')) LIKE @search
+    )`);
+    params.search = keyword;
+  }
+
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const total = (
+    db
+      .prepare(
+        `
+        SELECT COUNT(*) as count
+        FROM users
+        LEFT JOIN account_state ON account_state.id = users.id
+        ${where}
+      `
+      )
+      .get(params) as { count: number }
+  ).count;
+
+  const sortFieldMap: Record<UserListSortField, string> = {
+    freeCreditCents: 'COALESCE(account_state.free_credit_cents, 0)',
+    createdAt: 'users.created_at'
+  };
+  const sortField = input.sortField && input.sortField in sortFieldMap ? input.sortField : 'createdAt';
+  const sortOrder = input.sortOrder === 'asc' ? 'ASC' : 'DESC';
+
+  const users = db
+    .prepare(
+      `
+      SELECT
+        users.*, 
+        account_state.free_credit_cents,
+        account_state.current_plan_id,
+        account_state.current_plan_name,
+        account_state.plan_expires_at
+      FROM users
+      LEFT JOIN account_state ON account_state.id = users.id
+      ${where}
+      ORDER BY ${sortFieldMap[sortField]} ${sortOrder}, users.created_at DESC, users.id DESC
+      LIMIT @limit OFFSET @offset
+    `
+    )
+    .all(params)
+    .map(mapUserListItem);
+
+  return { users, total, page, pageSize, sortField, sortOrder };
+}
+
+export function getUserDetail(userId: string): UserListItem | null {
+  const row = db
+    .prepare(
+      `
+      SELECT
+        users.*, 
+        account_state.free_credit_cents,
+        account_state.current_plan_id,
+        account_state.current_plan_name,
+        account_state.plan_expires_at
+      FROM users
+      LEFT JOIN account_state ON account_state.id = users.id
+      WHERE users.id = ?
+      LIMIT 1
+    `
+    )
+    .get(userId);
+
+  return row ? mapUserListItem(row) : null;
 }
 
 export function getFirstAdminUser(): User | null {
@@ -1817,18 +1929,44 @@ function giftCardInputFromTaobaoMapping(mapping: TaobaoProductMapping): CreateGi
   };
 }
 
-export function listPlatformOrders(limit = 100): PlatformOrder[] {
-  return db
+export function listPlatformOrders(input: { page?: number; pageSize?: number; claimedByUserId?: string | null; days?: number } = {}) {
+  const page = Math.max(1, Math.floor(input.page || 1));
+  const pageSize = Math.min(Math.max(1, Math.floor(input.pageSize || 20)), 100);
+  const filters: string[] = [];
+  const params: Record<string, string | number> = {
+    limit: pageSize,
+    offset: (page - 1) * pageSize
+  };
+
+  if (input.claimedByUserId) {
+    filters.push('claimed_by_user_id = @claimedByUserId');
+    filters.push('claimed_at IS NOT NULL');
+    params.claimedByUserId = input.claimedByUserId;
+
+    if (input.days) {
+      params.claimedSince = new Date(
+        Date.now() - Math.max(1, Math.min(365, input.days)) * 24 * 60 * 60 * 1000
+      ).toISOString();
+      filters.push('claimed_at >= @claimedSince');
+    }
+  }
+
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const total = (db.prepare(`SELECT COUNT(*) as count FROM platform_orders ${where}`).get(params) as { count: number }).count;
+  const orders = db
     .prepare(
       `
       SELECT *
       FROM platform_orders
-      ORDER BY updated_at DESC
-      LIMIT ?
+      ${where}
+      ORDER BY COALESCE(claimed_at, updated_at) DESC, updated_at DESC
+      LIMIT @limit OFFSET @offset
     `
     )
-    .all(Math.max(1, Math.min(500, limit)))
+    .all(params)
     .map((row) => mapPlatformOrder(row) as PlatformOrder);
+
+  return { orders, total, page, pageSize };
 }
 
 export function getPlatformOrder(platform: PurchaseChannelId, orderId: string, subOrderId = ''): PlatformOrder | null {
@@ -1845,21 +1983,55 @@ export function getPlatformOrdersByOrderId(platform: PurchaseChannelId, orderId:
     .map((row) => mapPlatformOrder(row) as PlatformOrder);
 }
 
-export function listClaimedPlatformOrdersForUser(userId: string, days = 30): PlatformOrder[] {
-  const since = new Date(Date.now() - Math.max(1, Math.min(30, days)) * 24 * 60 * 60 * 1000).toISOString();
-  return db
+export function listClaimedPlatformOrdersForUser(userId: string, days = 30, page = 1, pageSize = 20) {
+  return listPlatformOrders({
+    claimedByUserId: userId,
+    days: Math.max(1, Math.min(30, days)),
+    page,
+    pageSize
+  });
+}
+
+export function listRedeemedGiftCards(input: { userId?: string; days?: number; page?: number; pageSize?: number } = {}) {
+  const page = Math.max(1, Math.floor(input.page || 1));
+  const pageSize = Math.min(Math.max(1, Math.floor(input.pageSize || 20)), 100);
+  const days = Math.max(1, Math.min(365, input.days || 30));
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const params: Record<string, string | number> = {
+    since,
+    limit: pageSize,
+    offset: (page - 1) * pageSize
+  };
+  const filters = ['gift_cards.redeemed_at IS NOT NULL', 'gift_cards.redeemed_at >= @since'];
+
+  if (input.userId) {
+    filters.push('gift_cards.redeemed_by_user_id = @userId');
+    params.userId = input.userId;
+  }
+
+  const where = `WHERE ${filters.join(' AND ')}`;
+  const total = (db.prepare(`SELECT COUNT(*) as count FROM gift_cards ${where}`).get(params) as { count: number }).count;
+  const giftCards = db
     .prepare(
       `
-      SELECT *
-      FROM platform_orders
-      WHERE claimed_by_user_id = ?
-        AND claimed_at IS NOT NULL
-        AND claimed_at >= ?
-      ORDER BY claimed_at DESC, updated_at DESC
+      SELECT
+        gift_cards.*,
+        creators.email as created_by_email,
+        redeemers.email as redeemed_by_email,
+        revokers.email as revoked_by_email
+      FROM gift_cards
+      LEFT JOIN users creators ON creators.id = gift_cards.created_by_user_id
+      LEFT JOIN users redeemers ON redeemers.id = gift_cards.redeemed_by_user_id
+      LEFT JOIN users revokers ON revokers.id = gift_cards.revoked_by_user_id
+      ${where}
+      ORDER BY gift_cards.redeemed_at DESC, gift_cards.created_at DESC
+      LIMIT @limit OFFSET @offset
     `
     )
-    .all(userId, since)
-    .map((row) => mapPlatformOrder(row) as PlatformOrder);
+    .all(params)
+    .map(mapGiftCard);
+
+  return { giftCards, total, page, pageSize, days };
 }
 
 export function processTaobaoPaidOrderLine(input: TaobaoOrderLineInput) {
@@ -2630,8 +2802,70 @@ function normalizeUpstreamStatus(value: unknown): UpstreamChannelGroup['status']
 }
 
 function normalizeUpstreamKeyStatus(value: unknown): UpstreamChannelKey['status'] {
-  if (value === 'paused' || value === 'revoked') return value;
+  if (value === 'paused' || value === 'revoked' || value === 'banned') return value;
   return 'active';
+}
+
+function parseResetTimeCandidate(value: unknown): string | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const ms = value > 1e12 ? value : value * 1000;
+    const date = new Date(ms);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) {
+      return parseResetTimeCandidate(numeric);
+    }
+    const parsed = Date.parse(trimmed);
+    if (!Number.isNaN(parsed)) {
+      return new Date(parsed).toISOString();
+    }
+  }
+
+  return null;
+}
+
+function extractResetTime(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+
+  const queue: unknown[] = [payload];
+  const seen = new Set<unknown>();
+  const candidateKeys = [
+    'resetAt',
+    'reset_at',
+    'resetTime',
+    'reset_time',
+    'resetsAt',
+    'resets_at',
+    'retryAfter',
+    'retry_after',
+    'availableAt',
+    'available_at'
+  ];
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || typeof current !== 'object' || seen.has(current)) continue;
+    seen.add(current);
+
+    for (const key of candidateKeys) {
+      const value = (current as Record<string, unknown>)[key];
+      const parsed = parseResetTimeCandidate(value);
+      if (parsed) return parsed;
+    }
+
+    for (const value of Object.values(current as Record<string, unknown>)) {
+      if (value && typeof value === 'object') {
+        queue.push(value);
+      }
+    }
+  }
+
+  return null;
 }
 
 function normalizeUpstreamKeyAgent(value: unknown): UpstreamKeyAgentType {
@@ -3260,8 +3494,9 @@ export function markUpstreamKeyFailure(input: {
   reason: string;
   until?: string | null;
 }) {
+  const allowFallbackUntil = input.statusCode === 402;
   const fallbackUntil = new Date(Date.now() + upstreamKeyDegradeMs).toISOString();
-  const until = input.until && Number.isFinite(Date.parse(input.until)) ? input.until : fallbackUntil;
+  const until = input.until && Number.isFinite(Date.parse(input.until)) ? input.until : allowFallbackUntil ? fallbackUntil : null;
   db.prepare(
     `
     UPDATE upstream_channel_keys
@@ -3309,6 +3544,21 @@ export function markUpstreamGroupFailure(input: {
     updatedAt: nowIso()
   });
 }
+
+export function resetUpstreamKeyFailureState(keyId: string) {
+  db.prepare(
+    `
+    UPDATE upstream_channel_keys
+    SET exhausted_until = NULL,
+        failure_reason = NULL,
+        failure_status_code = NULL,
+        updated_at = @updatedAt
+    WHERE id = @keyId
+  `
+  ).run({ keyId, updatedAt: nowIso() });
+}
+
+export { extractResetTime };
 
 export function touchUpstreamKey(id: string) {
   db.prepare('UPDATE upstream_channel_keys SET last_used_at = ?, updated_at = ? WHERE id = ?').run(nowIso(), nowIso(), id);
@@ -3578,9 +3828,13 @@ export function listUsageLogs(input: UsageLogQuery = {}) {
   const pageSize = Math.min(Math.max(1, Math.floor(input.pageSize || 20)), 100);
   const range = input.range || '24h';
   const status = input.status || 'all';
-  const since = new Date(Date.now() - logRangeMs[range]).toISOString();
-  const params: Record<string, string | number> = { since };
-  const filters = ['usage_logs.created_at >= @since'];
+  const params: Record<string, string | number> = {};
+  const filters: string[] = [];
+  if (range !== '30d' || !input.ignoreRange) {
+    const rangeMs = logRangeMs[range] ?? logRangeMs['24h'];
+    params.since = new Date(Date.now() - rangeMs).toISOString();
+    filters.push('usage_logs.created_at >= @since');
+  }
   filters.push('usage_logs.api_key_id IN (SELECT id FROM api_keys WHERE user_id IS NOT NULL)');
 
   if (status === 'success') {

@@ -20,6 +20,7 @@ import {
   getAccountState,
   getFirstAdminUser,
   getPlan,
+  getUserDetail,
   getRawKeyById,
   getKeyByRawKey,
   getTaobaoShop,
@@ -27,9 +28,11 @@ import {
   loginUser,
   hasAvailableUpstreamChannels,
   listGiftCards,
+  listRedeemedGiftCards,
   listKeys,
   listClaimedPlatformOrdersForUser,
   listPlatformOrders,
+  listUsers,
   listPlans,
   listProductLinks,
   listTaobaoProductMappings,
@@ -37,6 +40,7 @@ import {
   listUpstreamChannels,
   listUpstreamSelections,
   listUsageLogs,
+  extractResetTime,
   markUpstreamGroupFailure,
   markUpstreamKeyFailure,
   previewGiftCard,
@@ -51,6 +55,7 @@ import {
   touchKey,
   touchUpstreamKey,
   updateKey,
+  resetUpstreamKeyFailureState,
   updateUpstreamChannelKey,
   updateProductLinks,
   markTaobaoShopMessagePermitted,
@@ -1573,13 +1578,16 @@ app.delete('/api/taobao/product-mappings/:id', adminGuard, (req, res) => {
 });
 
 app.get('/api/taobao/orders', adminGuard, (req, res) => {
-  const schema = z.object({ limit: z.coerce.number().int().positive().max(500).default(100) });
+  const schema = z.object({
+    page: z.coerce.number().int().positive().default(1),
+    pageSize: z.coerce.number().int().positive().max(100).default(20)
+  });
   const parsed = schema.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  res.json({ orders: listPlatformOrders(parsed.data.limit) });
+  res.json(listPlatformOrders(parsed.data));
 });
 
 app.post('/api/user/orders/claim', (req, res) => {
@@ -1623,25 +1631,48 @@ app.post('/api/user/orders/claim', (req, res) => {
 app.get('/api/user/orders/claims', (req, res) => {
   const user = authUser(req, res);
   if (!user) return;
-  const schema = z.object({ days: z.coerce.number().int().positive().max(30).default(30) });
+  const schema = z.object({
+    days: z.coerce.number().int().positive().max(30).default(30),
+    page: z.coerce.number().int().positive().default(1),
+    pageSize: z.coerce.number().int().positive().max(100).default(20)
+  });
   const parsed = schema.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  const orders = listClaimedPlatformOrdersForUser(user.id, parsed.data.days);
-  res.json({
-    orders: orders.map((order) => ({
-      orderId: order.orderId,
-      subOrderId: order.subOrderId,
-      platform: order.platform,
-      title: order.title,
-      giftCardCode: order.giftCardCode,
-      deliveryStatus: order.deliveryStatus,
-      claimedAt: order.claimedAt,
-      updatedAt: order.updatedAt
-    }))
+  res.json(listClaimedPlatformOrdersForUser(user.id, parsed.data.days, parsed.data.page, parsed.data.pageSize));
+});
+
+app.get('/api/user/gift-card-redemptions', (req, res) => {
+  const user = authUser(req, res);
+  if (!user) return;
+  const schema = z.object({
+    days: z.coerce.number().int().positive().max(30).default(30),
+    page: z.coerce.number().int().positive().default(1),
+    pageSize: z.coerce.number().int().positive().max(100).default(20)
   });
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  res.json(listRedeemedGiftCards({ userId: user.id, ...parsed.data }));
+});
+
+app.get('/api/admin/gift-card-redemptions', adminGuard, (req, res) => {
+  const schema = z.object({
+    days: z.coerce.number().int().positive().max(30).default(30),
+    page: z.coerce.number().int().positive().default(1),
+    pageSize: z.coerce.number().int().positive().max(100).default(20),
+    userId: z.string().optional()
+  });
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  res.json(listRedeemedGiftCards(parsed.data));
 });
 
 app.get('/api/gift-cards', adminGuard, (req, res) => {
@@ -1811,7 +1842,7 @@ app.post('/api/upstream-channels/:id/keys', adminGuard, (req, res) => {
 
 app.patch('/api/upstream-channels/:id/keys/:keyId', adminGuard, (req, res) => {
   const parsed = upstreamKeySchema.extend({ key: z.string().optional() }).partial().extend({
-    status: z.enum(['active', 'paused', 'revoked']).optional()
+    status: z.enum(['active', 'paused', 'revoked', 'banned']).optional()
   }).safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
@@ -2121,6 +2152,91 @@ app.get('/api/user/logs', (req, res) => {
   res.json(listUsageLogs({ ...parsed.data, apiKeyId, userId: user.id }));
 });
 
+app.get('/api/admin/users', adminGuard, (req, res) => {
+  const schema = z.object({
+    page: z.coerce.number().int().positive().default(1),
+    pageSize: z.coerce.number().int().positive().max(100).default(20),
+    search: z.string().optional(),
+    sortField: z.enum(['freeCreditCents', 'createdAt']).default('createdAt'),
+    sortOrder: z.enum(['asc', 'desc']).default('desc')
+  });
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  res.json(listUsers(parsed.data));
+});
+
+app.get('/api/admin/users/:id', adminGuard, (req, res) => {
+  const user = getUserDetail(routeParam(req.params.id));
+  if (!user) {
+    res.status(404).json({ error: '用户不存在。' });
+    return;
+  }
+  res.json({ user });
+});
+
+app.get('/api/admin/users/:id/logs', adminGuard, (req, res) => {
+  const targetUser = getUserDetail(routeParam(req.params.id));
+  if (!targetUser) {
+    res.status(404).json({ error: '用户不存在。' });
+    return;
+  }
+  const schema = z.object({
+    page: z.coerce.number().int().positive().default(1),
+    pageSize: z.coerce.number().int().positive().max(100).default(20),
+    status: z.enum(['all', 'success', 'failed']).default('all'),
+    apiKeyId: z.string().optional(),
+    range: z.enum(['24h', '3d', '7d', '30d']).default('30d')
+  });
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const apiKeyId = parsed.data.apiKeyId && parsed.data.apiKeyId !== 'all' ? parsed.data.apiKeyId : undefined;
+  res.json(listUsageLogs({ ...parsed.data, apiKeyId, userId: targetUser.id }));
+});
+
+app.get('/api/admin/users/:id/order-claims', adminGuard, (req, res) => {
+  const targetUser = getUserDetail(routeParam(req.params.id));
+  if (!targetUser) {
+    res.status(404).json({ error: '用户不存在。' });
+    return;
+  }
+  const schema = z.object({
+    days: z.coerce.number().int().positive().max(30).default(30),
+    page: z.coerce.number().int().positive().default(1),
+    pageSize: z.coerce.number().int().positive().max(100).default(20)
+  });
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  res.json(listClaimedPlatformOrdersForUser(targetUser.id, parsed.data.days, parsed.data.page, parsed.data.pageSize));
+});
+
+app.get('/api/admin/users/:id/gift-card-redemptions', adminGuard, (req, res) => {
+  const targetUser = getUserDetail(routeParam(req.params.id));
+  if (!targetUser) {
+    res.status(404).json({ error: '用户不存在。' });
+    return;
+  }
+  const schema = z.object({
+    days: z.coerce.number().int().positive().max(30).default(30),
+    page: z.coerce.number().int().positive().default(1),
+    pageSize: z.coerce.number().int().positive().max(100).default(20)
+  });
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  res.json(listRedeemedGiftCards({ userId: targetUser.id, ...parsed.data }));
+});
+
 app.get('/api/user/usage', (req, res) => {
   const user = authUser(req, res);
   if (!user) return;
@@ -2349,7 +2465,7 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType)
           keyId: selection.key.id,
           statusCode: upstream.status,
           reason: errorMessage,
-          until: recoveryUntilFromUpstream(upstream.headers, payload)
+          until: recoveryUntilFromUpstream(upstream.headers, payload) || extractResetTime(payload)
         });
         lastFailure = { statusCode: upstream.status, message: errorMessage, requestId };
         continue;
@@ -2367,6 +2483,7 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType)
         continue;
       }
 
+      resetUpstreamKeyFailureState(selection.key.id);
       touchKey(key.id);
       res.status(upstream.status);
       res.setHeader('content-type', contentType);
