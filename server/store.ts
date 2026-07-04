@@ -1929,7 +1929,14 @@ function giftCardInputFromTaobaoMapping(mapping: TaobaoProductMapping): CreateGi
   };
 }
 
-export function listPlatformOrders(input: { page?: number; pageSize?: number; claimedByUserId?: string | null; days?: number } = {}) {
+export function listPlatformOrders(input: {
+  page?: number;
+  pageSize?: number;
+  claimedByUserId?: string | null;
+  days?: number;
+  giftCardType?: 'all' | 'credit' | 'plan';
+  giftCardCode?: string;
+} = {}) {
   const page = Math.max(1, Math.floor(input.page || 1));
   const pageSize = Math.min(Math.max(1, Math.floor(input.pageSize || 20)), 100);
   const filters: string[] = [];
@@ -1951,13 +1958,28 @@ export function listPlatformOrders(input: { page?: number; pageSize?: number; cl
     }
   }
 
+  if (input.giftCardType === 'credit' || input.giftCardType === 'plan') {
+    filters.push('gift_cards.type = @giftCardType');
+    params.giftCardType = input.giftCardType;
+  }
+
+  if (input.giftCardCode?.trim()) {
+    filters.push('platform_orders.gift_card_code LIKE @giftCardCode');
+    params.giftCardCode = `%${input.giftCardCode.trim()}%`;
+  }
+
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-  const total = (db.prepare(`SELECT COUNT(*) as count FROM platform_orders ${where}`).get(params) as { count: number }).count;
+  const total = (
+    db
+      .prepare(`SELECT COUNT(*) as count FROM platform_orders LEFT JOIN gift_cards ON gift_cards.code = platform_orders.gift_card_code ${where}`)
+      .get(params) as { count: number }
+  ).count;
   const orders = db
     .prepare(
       `
-      SELECT *
+      SELECT platform_orders.*, gift_cards.type as gift_card_type
       FROM platform_orders
+      LEFT JOIN gift_cards ON gift_cards.code = platform_orders.gift_card_code
       ${where}
       ORDER BY COALESCE(claimed_at, updated_at) DESC, updated_at DESC
       LIMIT @limit OFFSET @offset
@@ -1983,16 +2005,32 @@ export function getPlatformOrdersByOrderId(platform: PurchaseChannelId, orderId:
     .map((row) => mapPlatformOrder(row) as PlatformOrder);
 }
 
-export function listClaimedPlatformOrdersForUser(userId: string, days = 30, page = 1, pageSize = 20) {
+export function listClaimedPlatformOrdersForUser(
+  userId: string,
+  days = 30,
+  page = 1,
+  pageSize = 20,
+  giftCardType: 'all' | 'credit' | 'plan' = 'all',
+  giftCardCode = ''
+) {
   return listPlatformOrders({
     claimedByUserId: userId,
     days: Math.max(1, Math.min(30, days)),
     page,
-    pageSize
+    pageSize,
+    giftCardType,
+    giftCardCode
   });
 }
 
-export function listRedeemedGiftCards(input: { userId?: string; days?: number; page?: number; pageSize?: number } = {}) {
+export function listRedeemedGiftCards(input: {
+  userId?: string;
+  days?: number;
+  page?: number;
+  pageSize?: number;
+  type?: 'all' | 'credit' | 'plan';
+  code?: string;
+} = {}) {
   const page = Math.max(1, Math.floor(input.page || 1));
   const pageSize = Math.min(Math.max(1, Math.floor(input.pageSize || 20)), 100);
   const days = Math.max(1, Math.min(365, input.days || 30));
@@ -2007,6 +2045,16 @@ export function listRedeemedGiftCards(input: { userId?: string; days?: number; p
   if (input.userId) {
     filters.push('gift_cards.redeemed_by_user_id = @userId');
     params.userId = input.userId;
+  }
+
+  if (input.type === 'credit' || input.type === 'plan') {
+    filters.push('gift_cards.type = @type');
+    params.type = input.type;
+  }
+
+  if (input.code?.trim()) {
+    filters.push('gift_cards.code LIKE @code');
+    params.code = `%${input.code.trim()}%`;
   }
 
   const where = `WHERE ${filters.join(' AND ')}`;
@@ -3000,6 +3048,15 @@ function buildUpstreamGroupListItem(row: any): UpstreamChannelGroupListItem {
   };
 }
 
+function normalizeChannelPriority(value: unknown, fallback = 100) {
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric) || numeric <= 0) {
+    if (Number.isInteger(fallback) && Number(fallback) > 0) return Number(fallback);
+    throw new Error('渠道优先级必须是大于 0 的正整数。');
+  }
+  return numeric;
+}
+
 export function listUpstreamChannels(): UpstreamChannelGroupListItem[] {
   clearExpiredUpstreamDegradations();
   return (db
@@ -3032,6 +3089,7 @@ export function upsertUpstreamChannel(input: UpstreamChannelInput) {
   const current = db.prepare('SELECT * FROM upstream_channel_groups WHERE id = ?').get(id) as any;
   const next = {
     id,
+    channelNumber: Number(current?.channel_number ?? 0) || nextChannelNumber(),
     name: input.name.trim(),
     status: normalizeUpstreamStatus(input.status ?? current?.status),
     claudeApiUrl: normalizeUpstreamUrl(input.claudeApiUrl),
@@ -3052,7 +3110,7 @@ export function upsertUpstreamChannel(input: UpstreamChannelInput) {
       input.displayUsageMultiplier,
       usageMultiplier(current?.display_usage_multiplier, 2)
     ),
-    sortOrder: Number.isFinite(Number(input.sortOrder)) ? Number(input.sortOrder) : Number(current?.sort_order ?? 100),
+    sortOrder: normalizeChannelPriority(input.sortOrder, Number(current?.sort_order ?? 100)),
     createdAt: current?.created_at ?? timestamp,
     updatedAt: timestamp
   };
@@ -3069,6 +3127,7 @@ export function upsertUpstreamChannel(input: UpstreamChannelInput) {
     `
     INSERT INTO upstream_channel_groups (
       id,
+      channel_number,
       name,
       status,
       claude_api_url,
@@ -3089,6 +3148,7 @@ export function upsertUpstreamChannel(input: UpstreamChannelInput) {
     )
     VALUES (
       @id,
+      @channelNumber,
       @name,
       @status,
       @claudeApiUrl,
@@ -3109,6 +3169,7 @@ export function upsertUpstreamChannel(input: UpstreamChannelInput) {
     )
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
+      channel_number = excluded.channel_number,
       status = excluded.status,
       claude_api_url = excluded.claude_api_url,
       codex_api_url = excluded.codex_api_url,
@@ -3128,6 +3189,11 @@ export function upsertUpstreamChannel(input: UpstreamChannelInput) {
   });
 
   return getUpstreamChannel(id)!;
+}
+
+function nextChannelNumber() {
+  const row = db.prepare('SELECT COALESCE(MAX(channel_number), 0) AS max_number FROM upstream_channel_groups').get() as { max_number: number };
+  return Number(row?.max_number ?? 0) + 1;
 }
 
 export function deleteUpstreamChannel(id: string) {
@@ -3748,9 +3814,11 @@ export function createUsageLog(
   db.prepare(
     `
     INSERT INTO usage_logs (
-	      id,
-	      api_key_id,
-	      usage_source,
+      id,
+      api_key_id,
+      channel_group_id,
+      channel_number,
+      usage_source,
 	      model,
       path,
       method,
@@ -3771,9 +3839,11 @@ export function createUsageLog(
       created_at
     )
     VALUES (
-	      @id,
-	      @apiKeyId,
-	      @usageSource,
+      @id,
+      @apiKeyId,
+      @channelGroupId,
+      @channelNumber,
+      @usageSource,
 	      @model,
       @path,
       @method,

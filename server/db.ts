@@ -96,6 +96,8 @@ export function initDb() {
     CREATE TABLE IF NOT EXISTS usage_logs (
       id TEXT PRIMARY KEY,
       api_key_id TEXT,
+      channel_group_id TEXT,
+      channel_number INTEGER,
       usage_source TEXT NOT NULL DEFAULT 'plan' CHECK (usage_source IN ('plan', 'balance', 'none')),
       model TEXT NOT NULL DEFAULT 'unknown',
       path TEXT NOT NULL,
@@ -210,6 +212,7 @@ export function initDb() {
 
     CREATE TABLE IF NOT EXISTS upstream_channel_groups (
       id TEXT PRIMARY KEY,
+      channel_number INTEGER,
       name TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused')),
       claude_api_url TEXT NOT NULL DEFAULT '',
@@ -289,6 +292,41 @@ export function initDb() {
   ensurePlatformOrderClaimColumns();
   ensureUpstreamChannelColumns();
   ensureUpstreamKeyColumns();
+  ensureChannelNumberColumns();
+}
+
+function ensureChannelNumberColumns() {
+  const groupColumns = new Set(
+    (db.prepare('PRAGMA table_info(upstream_channel_groups)').all() as Array<{ name: string }>).map((column) => column.name)
+  );
+  if (!groupColumns.has('channel_number')) {
+    db.exec('ALTER TABLE upstream_channel_groups ADD COLUMN channel_number INTEGER');
+  }
+
+  const logColumns = new Set(
+    (db.prepare('PRAGMA table_info(usage_logs)').all() as Array<{ name: string }>).map((column) => column.name)
+  );
+  if (!logColumns.has('channel_group_id')) {
+    db.exec('ALTER TABLE usage_logs ADD COLUMN channel_group_id TEXT');
+  }
+  if (!logColumns.has('channel_number')) {
+    db.exec('ALTER TABLE usage_logs ADD COLUMN channel_number INTEGER');
+  }
+
+  const groups = db.prepare('SELECT id, created_at FROM upstream_channel_groups ORDER BY created_at ASC, id ASC').all() as Array<{ id: string }>;
+  groups.forEach((group, index) => {
+    db.prepare('UPDATE upstream_channel_groups SET channel_number = COALESCE(channel_number, ?) WHERE id = ?').run(index + 1, group.id);
+  });
+
+  db.exec(`
+    UPDATE usage_logs
+    SET channel_number = (
+      SELECT upstream_channel_groups.channel_number
+      FROM upstream_channel_groups
+      WHERE upstream_channel_groups.id = usage_logs.channel_group_id
+    )
+    WHERE channel_group_id IS NOT NULL AND channel_number IS NULL
+  `);
 }
 
 function ensureUserRoleColumn() {
@@ -546,6 +584,7 @@ export function mapPlatformOrder(row: any) {
     skuId: row.sku_id ?? null,
     title: row.title,
     status: row.status,
+    giftCardType: row.gift_card_type ?? null,
     giftCardCode: row.gift_card_code ?? null,
     deliveryStatus: row.delivery_status,
     deliveryMessage: row.delivery_message ?? null,
@@ -578,6 +617,8 @@ export function mapLog(row: any) {
   return {
     id: row.id,
     apiKeyId: row.api_key_id,
+    channelGroupId: row.channel_group_id ?? null,
+    channelNumber: row.channel_number ?? null,
     usageSource: row.usage_source ?? 'plan',
     model: row.model,
     path: row.path,
@@ -603,6 +644,7 @@ export function mapLog(row: any) {
 export function mapUpstreamChannel(row: any) {
   return {
     id: row.id,
+    channelNumber: Number(row.channel_number ?? 0),
     name: row.name,
     status: row.status,
     claudeApiUrl: row.claude_api_url,

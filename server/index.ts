@@ -877,6 +877,7 @@ async function probeKeyHealth(key: KeyWithPlan, agent: AgentType) {
   const spec = healthProbeSpec(agent);
   const attempts: Array<{
     upstream: string;
+    channelNumber: number | null;
     statusCode: number | null;
     ok: boolean;
     latencyMs: number;
@@ -953,7 +954,8 @@ async function probeKeyHealth(key: KeyWithPlan, agent: AgentType) {
       const reply = upstream.ok ? extractHealthProbeReply(agent, payload) : '';
       const errorMessage = upstreamErrorMessage(payload, upstream.statusText);
       const attempt = {
-        upstream: selection.group.name,
+        upstream: 'RelayHub',
+        channelNumber: selection.group.channelNumber,
         statusCode: upstream.status,
         ok: upstream.ok && Boolean(reply),
         latencyMs: Date.now() - attemptStartedAt,
@@ -977,7 +979,8 @@ async function probeKeyHealth(key: KeyWithPlan, agent: AgentType) {
           probe: {
             agent,
             model: spec.model,
-            upstream: selection.group.name,
+            upstream: 'RelayHub',
+            channelNumber: selection.group.channelNumber,
             responseStatusCode: upstream.status,
             responseTimeMs: Date.now() - startedAt,
             requestId,
@@ -991,7 +994,8 @@ async function probeKeyHealth(key: KeyWithPlan, agent: AgentType) {
       }
     } catch (error) {
       attempts.push({
-        upstream: selection.group.name,
+        upstream: 'RelayHub',
+        channelNumber: selection.group.channelNumber,
         statusCode: null,
         ok: false,
         latencyMs: Date.now() - attemptStartedAt,
@@ -1176,6 +1180,8 @@ function buildCcSwitchProviderLink(appName: 'claude' | 'codex', name: string, en
 
 function writeProxyLog(input: {
   key: KeyWithPlan | null;
+  channelGroupId?: string | null;
+  channelNumber?: number | null;
   model: string;
   path: string;
   method: string;
@@ -1191,6 +1197,8 @@ function writeProxyLog(input: {
   const usage = normalizeUsage(input.usage, input.rates, input.usageMultiplier);
   createUsageLog({
     apiKeyId: input.key?.id ?? null,
+    channelGroupId: input.channelGroupId ?? null,
+    channelNumber: input.channelNumber ?? null,
     usageSource: input.usageSource || 'plan',
     model: input.model || 'unknown',
     path: input.path,
@@ -1634,14 +1642,23 @@ app.get('/api/user/orders/claims', (req, res) => {
   const schema = z.object({
     days: z.coerce.number().int().positive().max(30).default(30),
     page: z.coerce.number().int().positive().default(1),
-    pageSize: z.coerce.number().int().positive().max(100).default(20)
+    pageSize: z.coerce.number().int().positive().max(100).default(20),
+    giftCardType: z.enum(['all', 'credit', 'plan']).default('all'),
+    giftCardCode: z.string().optional()
   });
   const parsed = schema.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  res.json(listClaimedPlatformOrdersForUser(user.id, parsed.data.days, parsed.data.page, parsed.data.pageSize));
+  res.json(listClaimedPlatformOrdersForUser(
+    user.id,
+    parsed.data.days,
+    parsed.data.page,
+    parsed.data.pageSize,
+    parsed.data.giftCardType,
+    parsed.data.giftCardCode || ''
+  ));
 });
 
 app.get('/api/user/gift-card-redemptions', (req, res) => {
@@ -1650,7 +1667,9 @@ app.get('/api/user/gift-card-redemptions', (req, res) => {
   const schema = z.object({
     days: z.coerce.number().int().positive().max(30).default(30),
     page: z.coerce.number().int().positive().default(1),
-    pageSize: z.coerce.number().int().positive().max(100).default(20)
+    pageSize: z.coerce.number().int().positive().max(100).default(20),
+    type: z.enum(['all', 'credit', 'plan']).default('all'),
+    code: z.string().optional()
   });
   const parsed = schema.safeParse(req.query);
   if (!parsed.success) {
@@ -1755,7 +1774,7 @@ const upstreamChannelSchema = z.object({
   cacheReadRatePerMillion: z.coerce.number().nonnegative().optional(),
   serverErrorRecoveryMinutes: z.coerce.number().int().min(5).max(300).optional(),
   displayUsageMultiplier: z.coerce.number().min(1).optional(),
-  sortOrder: z.coerce.number().int().optional()
+  sortOrder: z.coerce.number().int().positive().optional()
 });
 
 const upstreamKeySchema = z.object({
@@ -2208,14 +2227,23 @@ app.get('/api/admin/users/:id/order-claims', adminGuard, (req, res) => {
   const schema = z.object({
     days: z.coerce.number().int().positive().max(30).default(30),
     page: z.coerce.number().int().positive().default(1),
-    pageSize: z.coerce.number().int().positive().max(100).default(20)
+    pageSize: z.coerce.number().int().positive().max(100).default(20),
+    giftCardType: z.enum(['all', 'credit', 'plan']).default('all'),
+    giftCardCode: z.string().optional()
   });
   const parsed = schema.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  res.json(listClaimedPlatformOrdersForUser(targetUser.id, parsed.data.days, parsed.data.page, parsed.data.pageSize));
+  res.json(listClaimedPlatformOrdersForUser(
+    targetUser.id,
+    parsed.data.days,
+    parsed.data.page,
+    parsed.data.pageSize,
+    parsed.data.giftCardType,
+    parsed.data.giftCardCode || ''
+  ));
 });
 
 app.get('/api/admin/users/:id/gift-card-redemptions', adminGuard, (req, res) => {
@@ -2227,7 +2255,9 @@ app.get('/api/admin/users/:id/gift-card-redemptions', adminGuard, (req, res) => 
   const schema = z.object({
     days: z.coerce.number().int().positive().max(30).default(30),
     page: z.coerce.number().int().positive().default(1),
-    pageSize: z.coerce.number().int().positive().max(100).default(20)
+    pageSize: z.coerce.number().int().positive().max(100).default(20),
+    type: z.enum(['all', 'credit', 'plan']).default('all'),
+    code: z.string().optional()
   });
   const parsed = schema.safeParse(req.query);
   if (!parsed.success) {
@@ -2362,6 +2392,8 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType)
   if (!quotaCheck.ok) {
     createUsageLog({
       apiKeyId: key.id,
+      channelGroupId: null,
+      channelNumber: null,
       usageSource: 'none',
       model: req.body?.model || 'unknown',
       path: req.path,
@@ -2438,7 +2470,7 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType)
         res.status(upstream.status);
         res.setHeader('content-type', contentType);
         res.setHeader('x-transfer-station-key', key.keyPreview);
-        res.setHeader('x-transfer-station-upstream', selection.group.name);
+        res.setHeader('x-transfer-station-upstream', 'RelayHub');
         res.setHeader('x-transfer-station-quota-five-hour-remaining', String(quotaCheck.quota.remainingFiveHour));
         res.setHeader('x-transfer-station-quota-weekly-remaining', String(quotaCheck.quota.remainingWeekly));
         await streamSse(upstream, res, {
@@ -2488,7 +2520,7 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType)
       res.status(upstream.status);
       res.setHeader('content-type', contentType);
       res.setHeader('x-transfer-station-key', key.keyPreview);
-      res.setHeader('x-transfer-station-upstream', selection.group.name);
+      res.setHeader('x-transfer-station-upstream', 'RelayHub');
       res.setHeader('x-transfer-station-usage-multiplier', displayUsageMultiplier.toFixed(2));
       res.setHeader('x-transfer-station-quota-five-hour-remaining', String(quotaCheck.quota.remainingFiveHour));
       res.setHeader('x-transfer-station-quota-weekly-remaining', String(quotaCheck.quota.remainingWeekly));
@@ -2505,6 +2537,8 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType)
       );
       createUsageLog({
         apiKeyId: key.id,
+        channelGroupId: selection.group.id,
+        channelNumber: selection.group.channelNumber,
         usageSource: quotaCheck.quota.quotaSource,
         model: loggedModel,
         path: req.path,

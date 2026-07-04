@@ -54,6 +54,8 @@ export type ApiKeyRecord = {
 export type UsageLog = {
   id: string;
   apiKeyId: string | null;
+  channelGroupId: string | null;
+  channelNumber: number | null;
   usageSource: 'plan' | 'balance' | 'none';
   model: string;
   path: string;
@@ -77,6 +79,7 @@ export type UsageLog = {
 
 export type UpstreamChannelGroup = {
   id: string;
+  channelNumber: number;
   name: string;
   status: 'active' | 'paused';
   claudeApiUrl: string;
