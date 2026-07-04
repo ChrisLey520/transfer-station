@@ -42,7 +42,6 @@ import {
   RefreshCcw,
   ShieldCheck,
   ShoppingBag,
-  Download,
   Sun,
   UserRound,
   Play,
@@ -51,6 +50,7 @@ import {
   X
 } from 'lucide-react';
 import './styles.css';
+import { RechargeModal } from './components/RechargeModal.js';
 
 const officialQqGroupQrSrc = '/relayhub-qq-group-2.jpg';
 const officialQqGroupNumber = '1050784021';
@@ -397,7 +397,7 @@ const dictionary = {
     deliveryStatus_claimed: '已领取',
     deliveryStatus_skipped: '已跳过',
     deliveryStatus_failed: '失败',
-    billingCurrentPlan: '当前方案',
+    billingCurrentPlan: '余额详情',
     freePlan: 'Free',
     currentFreePlan: '您正在使用免费版。',
     upgradePlanHint: '升级以解锁更高速率限制和优先访问权。',
@@ -655,7 +655,7 @@ const dictionary = {
     deliveryStatus_claimed: '已領取',
     deliveryStatus_skipped: '已略過',
     deliveryStatus_failed: '失敗',
-    billingCurrentPlan: '目前方案',
+    billingCurrentPlan: '餘額詳情',
     freePlan: 'Free',
     currentFreePlan: '您正在使用免費版。',
     upgradePlanHint: '升級以解鎖更高速率限制和優先存取權。',
@@ -913,7 +913,7 @@ const dictionary = {
     deliveryStatus_claimed: 'Claimed',
     deliveryStatus_skipped: 'Skipped',
     deliveryStatus_failed: 'Failed',
-    billingCurrentPlan: 'Current plan',
+    billingCurrentPlan: 'Balance details',
     freePlan: 'Free',
     currentFreePlan: 'You are using the free plan.',
     upgradePlanHint: 'Upgrade to unlock higher rate limits and priority access.',
@@ -1526,6 +1526,19 @@ function showErrorToast(message: string) {
 
 function showSuccessToast(message: string) {
   showToast(message, 'success');
+}
+
+function buildRechargeModalProps(t: Record<string, string>, onClose: () => void) {
+  return {
+    onClose,
+    t,
+    officialQqGroupNumber,
+    officialQqGroupQrSrc,
+    onCopyGroupNumber: async () => {
+      await copyTextToClipboard(officialQqGroupNumber);
+      showSuccessToast(`${tr(t, 'officialQQGroupNumber', '群号')}已复制`);
+    }
+  };
 }
 
 function ToastViewport() {
@@ -3005,13 +3018,7 @@ function OverviewPage({
       </section>
 
       {isRechargeOpen ? (
-        <PurchaseChannelModal
-          description={t.rechargeChannelDescription}
-          mode="credit"
-          productLinks={data.productLinks}
-          onClose={() => setIsRechargeOpen(false)}
-          t={t}
-        />
+        <RechargeModal {...buildRechargeModalProps(t, () => setIsRechargeOpen(false))} />
       ) : null}
     </section>
   );
@@ -3095,13 +3102,7 @@ function UsagePage({ data, t, onChangePlan }: { data: Bootstrap; t: Record<strin
         {quota ? <QuotaUsagePanel quota={quota} t={t} /> : <Empty t={t} />}
       </section>
       {isRechargeOpen ? (
-        <PurchaseChannelModal
-          description={t.rechargeChannelDescription}
-          mode="credit"
-          productLinks={data.productLinks}
-          onClose={() => setIsRechargeOpen(false)}
-          t={t}
-        />
+        <RechargeModal {...buildRechargeModalProps(t, () => setIsRechargeOpen(false))} />
       ) : null}
     </section>
   );
@@ -6176,7 +6177,7 @@ function PlansPanel({
           t={t}
         />
         {purchaseTarget ? (
-          <PurchaseSuspendedModal onClose={() => setPurchaseTarget(null)} t={t} />
+          <RechargeModal {...buildRechargeModalProps(t, () => setPurchaseTarget(null))} />
         ) : null}
       </>
     );
@@ -6264,7 +6265,7 @@ function PlansPanel({
         />
       ) : null}
       {isRechargeOpen ? (
-        <PurchaseSuspendedModal onClose={() => setIsRechargeOpen(false)} t={t} />
+        <RechargeModal {...buildRechargeModalProps(t, () => setIsRechargeOpen(false))} />
       ) : null}
     </section>
   );
@@ -6340,182 +6341,6 @@ function PlanChangePage({
       </div>
       <p className="upgrade-footnote">{t.planFootnote}</p>
     </section>
-  );
-}
-
-function PurchaseSuspendedModal({
-  onClose,
-  t
-}: {
-  onClose: () => void;
-  t: Record<string, string>;
-}) {
-  async function handleCopyGroupNumber() {
-    await copyTextToClipboard(officialQqGroupNumber);
-    showSuccessToast(`${tr(t, 'officialQQGroupNumber', '群号')}已复制`);
-  }
-
-  function handleDownloadQr() {
-    const link = document.createElement('a');
-    link.href = officialQqGroupQrSrc;
-    link.download = 'relayhub-qq-group-2.jpg';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-  }
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <section
-        className="modal-panel purchase-suspended-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="purchase-suspended-title"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="section-heading">
-          <div>
-            <h2 id="purchase-suspended-title">{tr(t, 'purchaseSuspendedTitle', '购买渠道暂停通知')}</h2>
-            <p>{tr(t, 'purchaseSuspendedDescription', '由于淘宝和闲鱼禁止上架 GPT 和 Claude Code 商品，现已暂停该购买渠道，请加入官方 QQ 交流群找群主进行购买。')}</p>
-          </div>
-        </div>
-        <div className="purchase-suspended-content">
-          <div className="purchase-suspended-card purchase-suspended-notice">
-            <strong>{tr(t, 'officialQQGroup', '官方 QQ 交流群')}</strong>
-            <div className="purchase-suspended-group-row">
-              <span>{tr(t, 'officialQQGroupNumber', '群号')}：{officialQqGroupNumber}</span>
-              <button
-                type="button"
-                className="icon-button compact"
-                onClick={() => void handleCopyGroupNumber()}
-                title={t.copy}
-                aria-label={t.copy}
-              >
-                <Copy size={15} />
-              </button>
-            </div>
-          </div>
-          <div className="purchase-suspended-card purchase-suspended-qr-wrap">
-            <img className="purchase-suspended-qr" src={officialQqGroupQrSrc} alt={tr(t, 'officialQQGroup', '官方 QQ 交流群')} />
-            <button type="button" className="secondary-button purchase-suspended-download" onClick={handleDownloadQr}>
-              <Download size={16} />
-              下载二维码
-            </button>
-          </div>
-        </div>
-        <div className="modal-actions">
-          <button type="button" className="primary-button" onClick={onClose}>
-            关闭
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function PurchaseChannelModal({
-  description,
-  mode,
-  initialItemId,
-  productLinks,
-  onClose,
-  t
-}: {
-  description: string;
-  mode: PurchaseMode;
-  initialItemId?: string;
-  productLinks: ProductLink[];
-  onClose: () => void;
-  t: Record<string, string>;
-}) {
-  const options = React.useMemo(
-    () => (mode === 'plan' ? planProductOptions() : creditProductOptions()),
-    [mode]
-  );
-  const defaultItemId = initialItemId && options.some((option) => option.itemId === initialItemId)
-    ? initialItemId
-    : options[0]?.itemId || '';
-  const [selectedChannel, setSelectedChannel] = React.useState<PurchaseChannelId>('taobao');
-  const [selectedItemId, setSelectedItemId] = React.useState(defaultItemId);
-
-  React.useEffect(() => {
-    setSelectedItemId(defaultItemId);
-  }, [defaultItemId]);
-
-  const selectedOption = options.find((option) => option.itemId === selectedItemId) || options[0];
-
-  function openSelectedProduct() {
-    if (!selectedOption) return;
-    window.open(
-      productLinkUrl(productLinks, selectedOption.itemType, selectedOption.itemId, selectedChannel),
-      '_blank',
-      'noopener,noreferrer'
-    );
-    onClose();
-  }
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <section
-        className="modal-panel purchase-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="purchase-channel-title"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="section-heading">
-          <div>
-            <h2 id="purchase-channel-title">{t.purchaseChannelTitle}</h2>
-            <p>{description}</p>
-          </div>
-        </div>
-        <div className="purchase-modal-section">
-          <span>{t.purchaseChannelTitle}</span>
-          <div className="purchase-channel-grid">
-            {purchaseChannels.map((channel) => {
-              return (
-                <button
-                  type="button"
-                  className={selectedChannel === channel.id ? 'purchase-channel-card active' : 'purchase-channel-card'}
-                  key={channel.id}
-                  onClick={() => setSelectedChannel(channel.id)}
-                >
-                  <span className="purchase-channel-icon">
-                    <img src={channel.iconSrc} alt="" />
-                  </span>
-                  <strong>{t[channel.labelKey]}</strong>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        <div className="purchase-modal-section">
-          <span>{mode === 'plan' ? tr(t, 'purchasePlanTitle', '套餐') : tr(t, 'purchaseCreditTitle', '额度')}</span>
-          <div className="purchase-product-grid">
-            {options.map((option) => (
-              <button
-                type="button"
-                className={selectedItemId === option.itemId ? 'purchase-product-card active' : 'purchase-product-card'}
-                key={`${option.itemType}-${option.itemId}`}
-                onClick={() => setSelectedItemId(option.itemId)}
-              >
-                <strong>{option.name}</strong>
-                <span>{option.priceLabel}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="modal-actions">
-          <button type="button" className="secondary-button" onClick={onClose}>
-            {t.cancel}
-          </button>
-          <button type="button" className="primary-button" onClick={openSelectedProduct} disabled={!selectedOption}>
-            <ShoppingBag size={16} />
-            {tr(t, 'goPurchase', '去购买')}
-          </button>
-        </div>
-      </section>
-    </div>
   );
 }
 
@@ -6981,10 +6806,10 @@ function UserDetailPanel({ headers, userId, onBack, t }: { headers: HeadersInit;
             <p>{user?.email || ''} · {user?.currentPlanName || '-'} · 自由额度 {user ? currency(user.freeCreditCents, 'USD') : '-'}</p>
           </div>
         </div>
-        <div className="segmented-tabs">
-          <button type="button" className={tab === 'logs' ? 'segmented-tab active' : 'segmented-tab'} onClick={() => { setTab('logs'); setLogs((value) => ({ ...value, page: 1 })); }}>30天使用日志</button>
-          <button type="button" className={tab === 'claims' ? 'segmented-tab active' : 'segmented-tab'} onClick={() => { setTab('claims'); setClaims((value) => ({ ...value, page: 1 })); }}>礼品码领取记录</button>
-          <button type="button" className={tab === 'redemptions' ? 'segmented-tab active' : 'segmented-tab'} onClick={() => { setTab('redemptions'); setRedemptions((value) => ({ ...value, page: 1 })); }}>礼品码兑换记录</button>
+        <div className="log-type-tabs" role="tablist" aria-label="用户详情分页">
+          <button type="button" role="tab" aria-selected={tab === 'logs'} className={tab === 'logs' ? 'log-type-tab active' : 'log-type-tab'} onClick={() => { setTab('logs'); setLogs((value) => ({ ...value, page: 1 })); }}>30天使用日志</button>
+          <button type="button" role="tab" aria-selected={tab === 'claims'} className={tab === 'claims' ? 'log-type-tab active' : 'log-type-tab'} onClick={() => { setTab('claims'); setClaims((value) => ({ ...value, page: 1 })); }}>礼品码领取记录</button>
+          <button type="button" role="tab" aria-selected={tab === 'redemptions'} className={tab === 'redemptions' ? 'log-type-tab active' : 'log-type-tab'} onClick={() => { setTab('redemptions'); setRedemptions((value) => ({ ...value, page: 1 })); }}>礼品码兑换记录</button>
         </div>
         {tab === 'claims' || tab === 'redemptions' ? (
           <div className="log-filters">

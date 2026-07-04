@@ -3772,10 +3772,16 @@ code {
   color: var(--ink);
 }
 
+.purchase-group-card-centered {
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+}
+
 .purchase-suspended-group-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 12px;
   font-weight: 700;
 }
@@ -3811,7 +3817,7 @@ code {
   }
 
   .purchase-suspended-group-row {
-    align-items: flex-start;
+    align-items: center;
   }
 
   .purchase-suspended-qr {
