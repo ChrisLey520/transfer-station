@@ -3004,6 +3004,7 @@ function normalizeUpstreamUrl(value: string) {
 }
 
 function normalizeUpstreamStatus(value: unknown): UpstreamChannelGroup['status'] {
+  if (value === 'banned') return 'banned';
   return value === 'paused' ? 'paused' : 'active';
 }
 
@@ -3345,6 +3346,27 @@ export function upsertUpstreamChannel(input: UpstreamChannelInput) {
     ...next,
     useIndependentAgentKeys: next.useIndependentAgentKeys ? 1 : 0
   });
+
+  return getUpstreamChannel(id)!;
+}
+
+export function updateUpstreamChannelStatus(id: string, statusInput: UpstreamChannelGroup['status']) {
+  const existing = db.prepare('SELECT id FROM upstream_channel_groups WHERE id = ?').get(id);
+  if (!existing) return null;
+
+  const status = normalizeUpstreamStatus(statusInput);
+  const timestamp = nowIso();
+  db.prepare(
+    `
+    UPDATE upstream_channel_groups
+    SET status = @status,
+        degraded_until = CASE WHEN @status = 'active' THEN NULL ELSE degraded_until END,
+        degraded_reason = CASE WHEN @status = 'active' THEN NULL ELSE degraded_reason END,
+        degraded_status_code = CASE WHEN @status = 'active' THEN NULL ELSE degraded_status_code END,
+        updated_at = @updatedAt
+    WHERE id = @id
+  `
+  ).run({ id, status, updatedAt: timestamp });
 
   return getUpstreamChannel(id)!;
 }

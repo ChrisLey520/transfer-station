@@ -89,7 +89,7 @@ export type UpstreamChannelGroup = {
   id: string;
   channelNumber: number;
   name: string;
-  status: 'active' | 'paused';
+  status: 'active' | 'paused' | 'banned';
   claudeApiUrl: string;
   codexApiUrl: string;
   useIndependentAgentKeys: boolean;

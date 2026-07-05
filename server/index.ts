@@ -57,6 +57,7 @@ import {
   touchUpstreamKey,
   updateKey,
   resetUpstreamKeyFailureState,
+  updateUpstreamChannelStatus,
   updateUpstreamChannelKey,
   updateProductLinks,
   saveAnnouncement,
@@ -1836,7 +1837,7 @@ app.patch('/api/gift-cards/:code/revoke', adminGuard, (req, res) => {
 const upstreamChannelSchema = z.object({
   id: z.string().min(1).optional(),
   name: z.string().min(1),
-  status: z.enum(['active', 'paused']).optional(),
+  status: z.enum(['active', 'paused', 'banned']).optional(),
   claudeApiUrl: z.string().url(),
   codexApiUrl: z.string().url(),
   useIndependentAgentKeys: z.boolean().optional(),
@@ -1847,6 +1848,10 @@ const upstreamChannelSchema = z.object({
   serverErrorRecoveryMinutes: z.coerce.number().int().min(5).max(300).optional(),
   displayUsageMultiplier: z.coerce.number().min(1).optional(),
   sortOrder: z.coerce.number().int().positive().optional()
+});
+
+const upstreamChannelStatusSchema = z.object({
+  status: z.enum(['active', 'paused', 'banned'])
 });
 
 const upstreamKeySchema = z.object({
@@ -1901,6 +1906,21 @@ app.patch('/api/upstream-channels/:id', adminGuard, (req, res) => {
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to save upstream channel' });
   }
+});
+
+app.patch('/api/upstream-channels/:id/status', adminGuard, (req, res) => {
+  const parsed = upstreamChannelStatusSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const channel = updateUpstreamChannelStatus(routeParam(req.params.id), parsed.data.status);
+  if (!channel) {
+    res.status(404).json({ error: 'Channel not found' });
+    return;
+  }
+  res.json({ channel, channels: listUpstreamChannels() });
 });
 
 app.delete('/api/upstream-channels/:id', adminGuard, (req, res) => {
