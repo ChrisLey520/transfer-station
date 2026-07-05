@@ -21,7 +21,6 @@ import {
   getAccountState,
   getAnnouncementForUser,
   getFirstAdminUser,
-  getPlan,
   getUserDetail,
   getRawKeyById,
   getKeyByRawKey,
@@ -581,12 +580,6 @@ function centsToAmount(cents: number) {
   return Number(((cents || 0) / 100).toFixed(2));
 }
 
-function keyCurrency(key: KeyWithPlan) {
-  const account = key.userId ? getAccountState(key.userId) : null;
-  const plan = getPlan(account?.currentPlanId || key.planId) || getPlan(key.planId);
-  return plan?.currency || 'CNY';
-}
-
 function upstreamConfigured() {
   return hasAvailableUpstreamChannels('claude-code') || hasAvailableUpstreamChannels('codex');
 }
@@ -1070,7 +1063,7 @@ async function probeKeyHealth(key: KeyWithPlan, agent: AgentType) {
 
 function buildKeyBalance(key: KeyWithPlan) {
   const account = key.userId ? getAccountState(key.userId) : null;
-  const unit = keyCurrency(key);
+  const unit = '$';
   const amountCents = account?.freeCreditCents ?? 0;
 
   return {
@@ -1087,7 +1080,7 @@ function buildKeyBalance(key: KeyWithPlan) {
 }
 
 function buildKeyUsageStatus(key: KeyWithPlan) {
-  const unit = keyCurrency(key);
+  const unit = '$';
   const quota = assertQuota(key).quota;
   const summary = key.userId ? usageSummaryForUser(key.userId) : null;
   const balance = buildKeyBalance(key);
