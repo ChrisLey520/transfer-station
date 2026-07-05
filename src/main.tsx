@@ -15,6 +15,7 @@ import {
 } from '@floating-ui/react';
 import {
   Activity,
+  Bell,
   ArrowLeft,
   Ban,
   BarChart3,
@@ -40,8 +41,10 @@ import {
   Palette,
   Plus,
   RefreshCcw,
+  Save,
   ShieldCheck,
   ShoppingBag,
+  Smartphone,
   Sun,
   UserRound,
   Play,
@@ -57,7 +60,7 @@ const officialQqGroupNumber = '1050784021';
 
 type Language = 'zh-CN' | 'zh-TW' | 'en';
 type AuthMode = 'login' | 'register';
-type Tab = 'dashboard' | 'keys' | 'usage' | 'plans' | 'orders' | 'logs' | 'gift-cards' | 'products' | 'channels' | 'users' | 'user-detail' | 'guide';
+type Tab = 'dashboard' | 'keys' | 'usage' | 'plans' | 'orders' | 'logs' | 'gift-cards' | 'products' | 'channels' | 'announcements' | 'users' | 'user-detail' | 'guide';
 type PlanView = 'billing' | 'change';
 type PurchaseChannelId = 'taobao' | 'xianyu';
 type ProductItemType = 'plan' | 'credit';
@@ -173,6 +176,17 @@ type UsageLog = {
   createdAt: string;
 };
 
+type Announcement = {
+  id: string;
+  content: string;
+  publishedAt: string;
+  createdAt: string;
+  updatedAt: string;
+  shouldShow: boolean;
+  dismissedForToday: boolean;
+  dismissedPermanently: boolean;
+};
+
 type LogRange = '24h' | '3d' | '7d' | '30d';
 type LogStatus = 'all' | 'success' | 'failed';
 
@@ -207,6 +221,7 @@ type Bootstrap = {
   plans: Plan[];
   productLinks: ProductLink[];
   keys: ApiKey[];
+  announcement: Announcement | null;
 };
 
 type AuthSession = {
@@ -357,6 +372,7 @@ const dictionary = {
     guide: '向导',
     openMenu: '打开菜单',
     closeMenu: '关闭菜单',
+    loadingWorkspace: '正在加载工作台...',
     guideTitle: 'RelayHub 向导',
     guideIntroEyebrow: '快速上手',
     guideIntro: '从如何安装 Claude Code / Codex 客户端，到让AI执行第一条命令的五个简单步骤。从下方选择您的操作系统，以获得向导的帮助。',
@@ -615,6 +631,7 @@ const dictionary = {
     guide: '向導',
     openMenu: '開啟選單',
     closeMenu: '關閉選單',
+    loadingWorkspace: '正在載入工作台...',
     guideTitle: 'RelayHub 向導',
     guideIntroEyebrow: '快速上手',
     guideIntro: '從如何安裝 Claude Code / Codex 客戶端，到讓 AI 執行第一條命令的五個簡單步驟。從下方選擇您的作業系統，以獲得向導的幫助。',
@@ -873,6 +890,7 @@ const dictionary = {
     guide: 'Guide',
     openMenu: 'Open menu',
     closeMenu: 'Close menu',
+    loadingWorkspace: 'Loading workspace...',
     guideTitle: 'RelayHub Guide',
     guideIntroEyebrow: 'Getting started',
     guideIntro: 'Five simple steps from installing the Claude Code / Codex client to asking AI to run its first command. Choose your operating system below to get guided help.',
@@ -1169,7 +1187,8 @@ const defaultBootstrap: Bootstrap = {
   summary: defaultSummary,
   plans: [],
   productLinks: [],
-  keys: []
+  keys: [],
+  announcement: null
 };
 
 type UpgradePlan = {
@@ -1673,6 +1692,7 @@ const routeTabSegments: Record<Tab, string> = {
   'gift-cards': 'gift-cards',
   products: 'products',
   channels: 'channels',
+  announcements: 'announcements',
   users: 'users',
   'user-detail': 'users',
   guide: 'guide'
@@ -1796,6 +1816,7 @@ function getPageTitle(tab: Tab, planView: PlanView, t: Record<string, string>) {
     'gift-cards': tr(t, 'giftCardManagement', '礼品码管理'),
     products: tr(t, 'productManagement', '商品管理'),
     channels: tr(t, 'channelManagement', '渠道管理'),
+    announcements: '公告管理',
     users: tr(t, 'userCenter', '用户中心'),
     'user-detail': tr(t, 'userDetail', '用户详情'),
     guide: t.guideTitle
@@ -1902,6 +1923,7 @@ function App() {
   const [accentTheme, setAccentTheme] = React.useState<AccentTheme>(() => readAccentTheme());
   const [authToken, setAuthToken] = React.useState(localStorage.getItem('authToken') || '');
   const [data, setData] = React.useState<Bootstrap>(defaultBootstrap);
+  const [announcementBusy, setAnnouncementBusy] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [isNavDrawerOpen, setIsNavDrawerOpen] = React.useState(false);
   const [refreshTick, setRefreshTick] = React.useState(0);
@@ -2023,6 +2045,8 @@ function App() {
   const isPlansPage = activeTab === 'plans';
   const pageTitle = activeTab === 'user-detail' ? tr(t, 'userDetail', '用户详情') : getPageTitle(activeTab, planView, t);
   const showPageBackButton = activeTab === 'user-detail' || (activeTab === 'plans' && planView === 'change');
+  const isBootstrapReady = !authToken || Boolean(data.user.id);
+  const isAdmin = isBootstrapReady && data.user.role === 'admin';
   const nav: NavMenuItem[] = [
     { id: 'dashboard' as const, label: t.dashboard, icon: LayoutDashboard },
     { id: 'keys' as const, label: t.keys, icon: KeyRound },
@@ -2030,20 +2054,43 @@ function App() {
     { id: 'plans' as const, label: t.plans, icon: CreditCard },
     { id: 'orders' as const, label: tr(t, 'myOrders', '我的订单'), icon: ShoppingBag },
     { id: 'logs' as const, label: t.logs, icon: Activity },
-    ...(data.user.role === 'admin' ? [{ id: 'gift-cards' as const, label: tr(t, 'giftCards', '礼品码'), icon: Gift }] : []),
-    ...(data.user.role === 'admin' ? [{ id: 'products' as const, label: tr(t, 'productManagement', '商品管理'), icon: ShoppingBag }] : []),
-    ...(data.user.role === 'admin' ? [{ id: 'channels' as const, label: tr(t, 'channelManagement', '渠道管理'), icon: Route }] : []),
-    ...(data.user.role === 'admin' ? [{ id: 'users' as const, label: tr(t, 'userCenter', '用户中心'), icon: UserRound }] : []),
+    ...(isAdmin ? [{ id: 'gift-cards' as const, label: tr(t, 'giftCards', '礼品码'), icon: Gift }] : []),
+    ...(isAdmin ? [{ id: 'products' as const, label: tr(t, 'productManagement', '商品管理'), icon: ShoppingBag }] : []),
+    ...(isAdmin ? [{ id: 'channels' as const, label: tr(t, 'channelManagement', '渠道管理'), icon: Route }] : []),
+    ...(isAdmin ? [{ id: 'announcements' as const, label: '公告管理', icon: Bell }] : []),
+    ...(isAdmin ? [{ id: 'users' as const, label: tr(t, 'userCenter', '用户中心'), icon: UserRound }] : []),
     { id: 'guide' as const, label: t.guide, icon: GuideMenuIcon }
   ];
   const openMenuLabel = t.openMenu;
   const closeMenuLabel = t.closeMenu;
 
   React.useEffect(() => {
-    if ((activeTab === 'channels' || activeTab === 'gift-cards' || activeTab === 'products' || activeTab === 'users' || activeTab === 'user-detail') && data.user.role !== 'admin') {
+    if (!isBootstrapReady) return;
+    if ((activeTab === 'channels' || activeTab === 'gift-cards' || activeTab === 'products' || activeTab === 'announcements' || activeTab === 'users' || activeTab === 'user-detail') && !isAdmin) {
       navigate('dashboard');
     }
-  }, [activeTab, data.user.role]);
+  }, [activeTab, isAdmin, isBootstrapReady]);
+
+  async function dismissAnnouncement(action: 'close' | 'closeToday') {
+    if (!authToken || announcementBusy) return;
+    setAnnouncementBusy(true);
+    try {
+      const response = await fetch('/api/announcement/dismiss', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action })
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        throw new Error(responseErrorMessage(response, payload, t.requestFailed));
+      }
+      setData((current) => ({ ...current, announcement: (payload as { announcement: Announcement | null }).announcement }));
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setAnnouncementBusy(false);
+    }
+  }
 
   function navigate(tab: Tab, nextPlanView: PlanView = 'billing', userId?: string | null) {
     setActiveTab(tab);
@@ -2127,6 +2174,56 @@ function App() {
     );
   }
 
+  if (!isBootstrapReady) {
+    return (
+      <div className="app-shell app-bootstrap-shell">
+        <AppSidebar
+          activeTab={activeTab}
+          brand={t.brand}
+          closeLabel={closeMenuLabel}
+          isOpen={isNavDrawerOpen}
+          nav={[]}
+          onClose={() => setIsNavDrawerOpen(false)}
+          onNavigate={navigate}
+          subtitle={t.subtitle}
+        />
+
+        <main className="main-panel">
+          <header className="topbar">
+            <div className="topbar-title-row">
+              <MobileMenuButton
+                isOpen={isNavDrawerOpen}
+                label={isNavDrawerOpen ? closeMenuLabel : openMenuLabel}
+                onClick={() => setIsNavDrawerOpen((isOpen) => !isOpen)}
+              />
+              <div className="topbar-title">
+                <h1>{pageTitle}</h1>
+              </div>
+            </div>
+            <div className="topbar-actions">
+              <LanguageMenu language={language} setLanguage={setLanguage} />
+              <ThemeMenu
+                themeMode={themeMode}
+                setThemeMode={changeThemeMode}
+                accentTheme={accentTheme}
+                setAccentTheme={setAccentTheme}
+                t={t}
+              />
+              <button type="button" className="icon-button" onClick={() => void handleRefresh()} title={t.refresh}>
+                <RefreshCcw size={17} />
+              </button>
+            </div>
+          </header>
+          {loading ? <div className="loading-line" /> : null}
+          <section className="bootstrap-status" aria-live="polite">
+            <ShieldCheck size={22} />
+            <p>{loading ? tr(t, 'loadingWorkspace', '正在加载工作台...') : t.requestFailed}</p>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <AppSidebar
@@ -2140,7 +2237,7 @@ function App() {
         subtitle={t.subtitle}
       />
 
-      <main className={isPlansPage ? 'main-panel plans-main-panel' : 'main-panel'}>
+      <main className={activeTab === 'announcements' ? 'main-panel announcement-main-panel' : isPlansPage ? 'main-panel plans-main-panel' : 'main-panel'}>
         <header className="topbar">
           <div className="topbar-title-row">
             <MobileMenuButton
@@ -2209,10 +2306,19 @@ function App() {
           <ProductLinksPanel headers={headers} initialProductLinks={data.productLinks} refreshTick={refreshTick} t={t} />
         ) : null}
         {activeTab === 'channels' && data.user.role === 'admin' ? <ChannelsPanel headers={headers} refreshTick={refreshTick} t={t} /> : null}
+        {activeTab === 'announcements' && data.user.role === 'admin' ? <AnnouncementsPanel headers={headers} refreshTick={refreshTick} t={t} onSaved={handleRefresh} /> : null}
         {activeTab === 'users' && data.user.role === 'admin' ? <UsersCenterPanel headers={headers} refreshTick={refreshTick} t={t} onOpenUser={(userId) => navigate('user-detail', 'billing', userId)} /> : null}
         {activeTab === 'user-detail' && data.user.role === 'admin' && activeUserId ? <UserDetailPanel headers={headers} userId={activeUserId} onBack={() => navigate('users')} t={t} /> : null}
         {activeTab === 'guide' ? <GuidePage t={t} /> : null}
       </main>
+      {data.announcement?.shouldShow ? (
+        <AnnouncementModal
+          announcement={data.announcement}
+          busy={announcementBusy}
+          onClose={() => void dismissAnnouncement('close')}
+          onCloseToday={() => void dismissAnnouncement('closeToday')}
+        />
+      ) : null}
     </div>
   );
 }
@@ -7043,6 +7149,204 @@ function usageColor(value: number) {
   if (value <= 60) return 'var(--usage-yellow)';
   if (value <= 80) return 'var(--usage-orange)';
   return 'var(--usage-red)';
+}
+
+function AnnouncementsPanel({ headers, refreshTick, onSaved }: { headers: HeadersInit; refreshTick: number; t: Record<string, string>; onSaved: () => Promise<void> }) {
+  const [announcement, setAnnouncement] = React.useState<Announcement | null>(null);
+  const [content, setContent] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+  const [previewMode, setPreviewMode] = React.useState<'desktop' | 'mobile'>('desktop');
+  const characterCount = content.trim().length;
+  const lineCount = content.trim() ? content.trim().split(/\r?\n/).filter((line) => line.trim()).length : 0;
+  const savedContent = announcement?.content || '';
+  const hasDraftChanges = content !== savedContent;
+  const publishedAtLabel = announcement?.publishedAt ? formatDateTime(announcement.publishedAt) : '尚未发布';
+  const previewContent = content.trim() || '公告内容预览会显示在这里。';
+
+  const loadAnnouncement = React.useCallback(async () => {
+    const response = await fetch('/api/admin/announcement', { headers });
+    const payload = await readJsonResponse(response);
+    if (!response.ok) {
+      showErrorToast(responseErrorMessage(response, payload, '获取公告失败'));
+      return;
+    }
+    const next = (payload as { announcement: Announcement | null }).announcement;
+    setAnnouncement(next);
+    setContent(next?.content || '');
+  }, [headers]);
+
+  React.useEffect(() => { void loadAnnouncement(); }, [loadAnnouncement, refreshTick]);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!content.trim() || saving) return;
+    setSaving(true);
+    try {
+      const response = await fetch('/api/admin/announcement', {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ content })
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        throw new Error(responseErrorMessage(response, payload, '保存公告失败'));
+      }
+      const next = (payload as { announcement: Announcement }).announcement;
+      setAnnouncement(next);
+      setContent(next.content);
+      showSuccessToast('公告已更新');
+      await onSaved();
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, '保存公告失败'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function insertTemplate(kind: 'maintenance' | 'purchase') {
+    const templates = {
+      maintenance: '系统维护通知\n\n我们将于今晚 23:00 进行短时维护，期间部分请求可能出现延迟。维护完成后服务会自动恢复，无需额外操作。',
+      purchase: `礼品码购买通知\n\n请加入 QQ 群 ${officialQqGroupNumber} 联系管理员购买礼品码。购买后可前往“套餐/余额”兑换；如遇同步延迟，请稍后刷新页面或联系管理员处理。`
+    };
+    setContent((value) => (value.trim() ? `${value.trim()}\n\n${templates[kind]}` : templates[kind]));
+  }
+
+  function clearDraft() {
+    setContent('');
+  }
+
+  return (
+    <section className="content-grid">
+      <section className="announcement-workspace">
+        <div className="announcement-command-bar">
+          <div>
+            <h2>公告管理</h2>
+            <p>编辑、预览并发布全站公告</p>
+          </div>
+          <div className="announcement-command-actions">
+            <span className={hasDraftChanges ? 'announcement-status-pill is-dirty' : 'announcement-status-pill'}>
+              {hasDraftChanges ? '有未发布修改' : '内容已同步'}
+            </span>
+            <button type="button" className="secondary-button" onClick={() => setContent(savedContent)} disabled={saving || !hasDraftChanges}>
+              <RefreshCcw size={16} />
+              恢复
+            </button>
+            <button type="submit" form="announcement-publish-form" className="primary-button" disabled={saving || !content.trim()}>
+              <Save size={16} />
+              {saving ? '发布中…' : '发布公告'}
+            </button>
+          </div>
+        </div>
+
+        <div className="announcement-status-strip">
+          <div>
+            <span>发布状态</span>
+            <strong>{announcement ? '已发布' : '未发布'}</strong>
+          </div>
+          <div>
+            <span>关闭策略</span>
+            <strong>发布后重置</strong>
+          </div>
+          <div>
+            <span>发布时间</span>
+            <strong>{publishedAtLabel}</strong>
+          </div>
+          <div>
+            <span>内容规模</span>
+            <strong>{characterCount} 字 · {lineCount} 段</strong>
+          </div>
+        </div>
+
+        <div className="announcement-editor-layout">
+          <form id="announcement-publish-form" className="announcement-form announcement-editor-card" onSubmit={submit}>
+            <div className="announcement-editor-head">
+              <div>
+                <strong>编辑内容</strong>
+                <p>保存后旧公告会被覆盖删除，并重置所有用户关闭状态</p>
+              </div>
+              <span className="announcement-character-badge">{characterCount} 字</span>
+            </div>
+            <label className="announcement-field-label" htmlFor="announcement-content-editor">公告正文</label>
+            <div className="announcement-editor-surface">
+              <div className="announcement-toolbar" aria-label="公告编辑工具">
+                <div className="announcement-toolbar-group">
+                  <button type="button" onClick={() => insertTemplate('maintenance')} disabled={saving}>
+                    <Bell size={15} />
+                    维护模板
+                  </button>
+                  <button type="button" onClick={() => insertTemplate('purchase')} disabled={saving}>
+                    <Copy size={15} />
+                    购买模板
+                  </button>
+                </div>
+                <button type="button" className="announcement-toolbar-danger" onClick={clearDraft} disabled={saving || !content}>
+                  <X size={15} />
+                  清空
+                </button>
+              </div>
+              <textarea id="announcement-content-editor" value={content} onChange={(event) => setContent(event.target.value)} rows={14} placeholder="例如：\n系统维护通知\n\n我们将于今晚 23:00 进行短时维护，期间部分请求可能出现延迟。\n维护完成后服务会自动恢复，无需额外操作。" required />
+              <div className="announcement-editor-footer">
+                <span>{lineCount || 0} 段</span>
+                <span>{characterCount} 字</span>
+                <span>{hasDraftChanges ? '草稿未发布' : '内容已同步'}</span>
+              </div>
+            </div>
+          </form>
+
+          <aside className="announcement-preview-card">
+            <div className="announcement-preview-head">
+              <div>
+                <strong>弹窗预览</strong>
+                <p>用户拉取个人信息时展示</p>
+              </div>
+              <div className="announcement-preview-switch" role="group" aria-label="预览尺寸">
+                <button type="button" className={previewMode === 'desktop' ? 'active' : ''} onClick={() => setPreviewMode('desktop')} title="桌面预览">
+                  <Monitor size={15} />
+                </button>
+                <button type="button" className={previewMode === 'mobile' ? 'active' : ''} onClick={() => setPreviewMode('mobile')} title="移动预览">
+                  <Smartphone size={15} />
+                </button>
+              </div>
+            </div>
+            <div className={`announcement-preview-window ${previewMode === 'mobile' ? 'is-mobile' : ''}`}>
+              <div className="announcement-preview-window-head">
+                <div>
+                  <span>最新公告</span>
+                  <strong>{publishedAtLabel}</strong>
+                </div>
+                <span className="announcement-preview-badge">最新发布</span>
+              </div>
+              <div className="announcement-preview-body">{previewContent}</div>
+              <div className="announcement-preview-actions">
+                <button type="button" className="secondary-button" disabled>今日关闭</button>
+                <button type="button" className="primary-button" disabled>关闭</button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function AnnouncementModal({ announcement, busy, onClose, onCloseToday }: { announcement: Announcement; busy: boolean; onClose: () => void; onCloseToday: () => void }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal-panel announcement-modal" role="dialog" aria-modal="true" aria-labelledby="announcement-modal-title">
+        <div className="section-heading">
+          <div>
+            <h2 id="announcement-modal-title">最新公告</h2>
+            <p>公告时间：{formatDateTime(announcement.publishedAt)}</p>
+          </div>
+        </div>
+        <div className="announcement-modal-content">{announcement.content}</div>
+        <div className="modal-actions announcement-modal-actions">
+          <button type="button" className="secondary-button" onClick={onCloseToday} disabled={busy}>今日关闭</button>
+          <button type="button" className="primary-button" onClick={onClose} disabled={busy}>关闭</button>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function pct(used: number, limit: number) {
