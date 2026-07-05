@@ -6,32 +6,34 @@ function scaleTokenCount(value, multiplier = 1) {
 
 function normalizeUsage(usage, rates = {}, usageMultiplier = 1) {
   const inputTokenDetails = usage?.input_tokens_details || usage?.prompt_tokens_details;
-  const outputTokenDetails = usage?.output_tokens_details || usage?.completion_tokens_details;
-  const cachedTokens = Number(inputTokenDetails?.cached_tokens ?? inputTokenDetails?.cache_read_input_tokens ?? 0);
-  const rawInputTokens = Number(usage?.input_tokens ?? usage?.prompt_tokens ?? 0);
-  const inputTokens = scaleTokenCount(Math.max(0, rawInputTokens - cachedTokens), usageMultiplier);
+  const totalTokenValue = usage?.total_tokens ?? usage?.totalTokens;
+  const inputTokens = scaleTokenCount(Number(usage?.input_tokens ?? usage?.prompt_tokens ?? 0), usageMultiplier);
   const outputTokens = scaleTokenCount(Number(usage?.output_tokens ?? usage?.completion_tokens ?? 0), usageMultiplier);
   const cacheCreationInputTokens = scaleTokenCount(
     Number(usage?.cache_creation_input_tokens ?? inputTokenDetails?.cache_creation_input_tokens ?? 0),
     usageMultiplier
   );
-  const cacheReadInputTokens = scaleTokenCount(Number(usage?.cache_read_input_tokens ?? cachedTokens ?? 0), usageMultiplier);
-  const reasoningTokens = scaleTokenCount(Number(outputTokenDetails?.reasoning_tokens ?? 0), usageMultiplier);
-  const billedOutputTokens = outputTokens + reasoningTokens;
+  const cacheReadInputTokens = scaleTokenCount(
+    Number(usage?.cache_read_input_tokens ?? inputTokenDetails?.cache_read_input_tokens ?? inputTokenDetails?.cached_tokens ?? 0),
+    usageMultiplier
+  );
+  const totalTokens =
+    typeof totalTokenValue === 'number' && Number.isFinite(totalTokenValue)
+      ? scaleTokenCount(totalTokenValue, usageMultiplier)
+      : inputTokens + outputTokens + cacheCreationInputTokens + cacheReadInputTokens;
   const costs = usageCostCents({
     inputTokens,
-    outputTokens: billedOutputTokens,
+    outputTokens,
     cacheCreationInputTokens,
     cacheReadInputTokens
   }, rates);
 
   return {
     inputTokens,
-    outputTokens: billedOutputTokens,
+    outputTokens,
     cacheCreationInputTokens,
     cacheReadInputTokens,
-    reasoningTokens,
-    totalTokens: inputTokens + billedOutputTokens + cacheCreationInputTokens + cacheReadInputTokens,
+    totalTokens,
     ...costs
   };
 }

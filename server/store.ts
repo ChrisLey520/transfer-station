@@ -3671,7 +3671,7 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
   const fiveHour = db
     .prepare(
       `
-      SELECT COALESCE(SUM(total_cost_cents), 0) as used
+      SELECT COALESCE(SUM(total_tokens), 0) as used
       FROM usage_logs
       WHERE api_key_id = ? AND created_at >= ? AND status_code BETWEEN 200 AND 299
         AND COALESCE(usage_source, 'plan') = 'plan'
@@ -3682,7 +3682,7 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
   const weekly = db
     .prepare(
       `
-      SELECT COALESCE(SUM(total_cost_cents), 0) as used
+      SELECT COALESCE(SUM(total_tokens), 0) as used
       FROM usage_logs
       WHERE api_key_id = ? AND created_at >= ? AND status_code BETWEEN 200 AND 299
         AND COALESCE(usage_source, 'plan') = 'plan'
