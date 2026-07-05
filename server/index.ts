@@ -494,37 +494,52 @@ function getTokenUsage(payload: unknown, rates: UsageRates = {}, usageMultiplier
   return normalizeUsage(usage, rates, usageMultiplier);
 }
 
+function usageFromStreamingEvent(event: unknown): AnthropicUsage | undefined {
+  if (!event || typeof event !== 'object') return undefined;
+  const record = event as Record<string, any>;
+  return record.usage || record.message?.usage || record.response?.usage;
+}
+
+function mergeStreamingUsage(current: AnthropicUsage, event: unknown) {
+  const usage = usageFromStreamingEvent(event);
+  if (!usage) return current;
+  return { ...current, ...usage };
+}
+
 function scaleTokenCount(value: number, multiplier = 1) {
   return Math.max(0, Math.round(value * Math.max(1, multiplier || 1)));
 }
 
 function normalizeUsage(usage: AnthropicUsage | undefined, rates: UsageRates = {}, usageMultiplier = 1) {
   const inputTokenDetails = (usage as any)?.input_tokens_details || (usage as any)?.prompt_tokens_details;
-  const outputTokenDetails = (usage as any)?.output_tokens_details || (usage as any)?.completion_tokens_details;
-  const cachedTokens = Number(inputTokenDetails?.cached_tokens ?? inputTokenDetails?.cache_read_input_tokens ?? 0);
-  const rawInputTokens = Number((usage as any)?.input_tokens ?? (usage as any)?.prompt_tokens ?? 0);
-  const inputTokens = scaleTokenCount(Math.max(0, rawInputTokens - cachedTokens), usageMultiplier);
+  const totalTokenValue = (usage as any)?.total_tokens ?? (usage as any)?.totalTokens;
+  const inputTokens = scaleTokenCount(Number((usage as any)?.input_tokens ?? (usage as any)?.prompt_tokens ?? 0), usageMultiplier);
   const outputTokens = scaleTokenCount(Number((usage as any)?.output_tokens ?? (usage as any)?.completion_tokens ?? 0), usageMultiplier);
   const cacheCreationInputTokens = scaleTokenCount(
     Number((usage as any)?.cache_creation_input_tokens ?? inputTokenDetails?.cache_creation_input_tokens ?? 0),
     usageMultiplier
   );
-  const cacheReadInputTokens = scaleTokenCount(Number((usage as any)?.cache_read_input_tokens ?? cachedTokens ?? 0), usageMultiplier);
-  const reasoningTokens = scaleTokenCount(Number(outputTokenDetails?.reasoning_tokens ?? 0), usageMultiplier);
-  const billedOutputTokens = outputTokens + reasoningTokens;
+  const cacheReadInputTokens = scaleTokenCount(
+    Number((usage as any)?.cache_read_input_tokens ?? inputTokenDetails?.cache_read_input_tokens ?? inputTokenDetails?.cached_tokens ?? 0),
+    usageMultiplier
+  );
+  const totalTokens =
+    typeof totalTokenValue === 'number' && Number.isFinite(totalTokenValue)
+      ? scaleTokenCount(totalTokenValue, usageMultiplier)
+      : inputTokens + outputTokens + cacheCreationInputTokens + cacheReadInputTokens;
   const costs = usageCostCents({
     inputTokens,
-    outputTokens: billedOutputTokens,
+    outputTokens,
     cacheCreationInputTokens,
     cacheReadInputTokens
   }, rates);
 
   return {
     inputTokens,
-    outputTokens: billedOutputTokens,
+    outputTokens,
     cacheCreationInputTokens,
     cacheReadInputTokens,
-    totalTokens: inputTokens + billedOutputTokens + cacheCreationInputTokens + cacheReadInputTokens,
+    totalTokens,
     ...costs
   };
 }
@@ -600,42 +615,40 @@ function scaledTokenValue(value: unknown, multiplier: number) {
   return Math.max(0, Math.round(value * multiplier));
 }
 
+function isUsageObjectKey(key: string) {
+  return key === 'usage' || key.endsWith('_usage') || key.endsWith('Usage');
+}
+
 function scaleUsageObject(usage: unknown, multiplier: number) {
   if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return;
-  const record = usage as Record<string, unknown>;
-  const tokenKeys = [
-    'input_tokens',
-    'output_tokens',
-    'cache_creation_input_tokens',
-    'cache_read_input_tokens',
-    'total_tokens',
-    'inputTokens',
-    'outputTokens',
-    'cacheCreationInputTokens',
-    'cacheReadInputTokens',
-    'totalTokens',
-    'prompt_tokens',
-    'completion_tokens',
-    'total_tokens',
-    'promptTokens',
-    'completionTokens'
-  ];
-  for (const key of tokenKeys) {
-    if (key in record) record[key] = scaledTokenValue(record[key], multiplier);
-  }
+  const seen = new WeakSet<object>();
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    if (seen.has(value)) return;
+    seen.add(value);
 
-  for (const [key, value] of Object.entries(record)) {
-    if (value && typeof value === 'object') {
-      scaleUsageObject(value, multiplier);
-      continue;
+    const record = value as Record<string, unknown>;
+    for (const [key, child] of Object.entries(record)) {
+      if (child && typeof child === 'object') {
+        visit(child);
+        continue;
+      }
+      if (/tokens?/i.test(key)) record[key] = scaledTokenValue(child, multiplier);
     }
-    if (/tokens?/i.test(key)) record[key] = scaledTokenValue(value, multiplier);
-  }
+  };
+  visit(usage);
 }
 
 function scaleUsageInPayload(payload: unknown, multiplier: number) {
   if (multiplier === 1 || !payload || typeof payload !== 'object') return payload;
   const cloned = structuredClone(payload);
+  const scaledUsageObjects = new WeakSet<object>();
+  const scaleUsageOnce = (usage: unknown) => {
+    if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return;
+    if (scaledUsageObjects.has(usage)) return;
+    scaledUsageObjects.add(usage);
+    scaleUsageObject(usage, multiplier);
+  };
   const visit = (value: unknown) => {
     if (!value || typeof value !== 'object') return;
     if (Array.isArray(value)) {
@@ -644,12 +657,12 @@ function scaleUsageInPayload(payload: unknown, multiplier: number) {
     }
 
     const record = value as Record<string, unknown>;
-    if ('usage' in record) scaleUsageObject(record.usage, multiplier);
-    if ('message' in record && record.message && typeof record.message === 'object') {
-      const message = record.message as Record<string, unknown>;
-      if ('usage' in message) scaleUsageObject(message.usage, multiplier);
+    for (const [key, child] of Object.entries(record)) {
+      if (isUsageObjectKey(key)) scaleUsageOnce(child);
     }
-    Object.values(record).forEach(visit);
+    for (const [key, child] of Object.entries(record)) {
+      if (!isUsageObjectKey(key)) visit(child);
+    }
   };
   visit(cloned);
   return cloned;
@@ -666,9 +679,10 @@ function rewriteJsonUsageText(text: string, multiplier: number) {
   };
 }
 
-function scaleSseChunk(chunkText: string, multiplier: number) {
-  if (multiplier === 1) return chunkText;
-  return chunkText
+function scaleSseEvent(eventText: string, multiplier: number) {
+  if (multiplier === 1) return eventText;
+  if (!eventText.includes('"usage"')) return eventText;
+  return eventText
     .split('\n')
     .map((line) => {
       if (!line.startsWith('data:')) return line;
@@ -2473,8 +2487,10 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType)
         res.setHeader('x-transfer-station-upstream', 'RelayHub');
         res.setHeader('x-transfer-station-quota-five-hour-remaining', String(quotaCheck.quota.remainingFiveHour));
         res.setHeader('x-transfer-station-quota-weekly-remaining', String(quotaCheck.quota.remainingWeekly));
-        await streamSse(upstream, res, {
+        await streamSse(upstream, req, res, {
           key,
+          channelGroupId: selection.group.id,
+          channelNumber: selection.group.channelNumber,
           model: requestModel,
           path: req.path,
           method: req.method,
@@ -2620,9 +2636,12 @@ app.all(['/v1', '/v1/*route'], (_req, res) => {
 
 async function streamSse(
   upstream: globalThis.Response,
+  req: Request,
   res: Response,
   logContext: {
     key: KeyWithPlan;
+    channelGroupId?: string | null;
+    channelNumber?: number | null;
     model: string;
     path: string;
     method: string;
@@ -2639,19 +2658,29 @@ async function streamSse(
   let buffered = '';
   let finalUsage: AnthropicUsage = {};
   let errorMessage: string | null = upstream.ok ? null : upstream.statusText;
+  const displayUsageMultiplier = logContext.displayUsageMultiplier || 1;
+  let clientClosed = false;
+
+  const markClientClosed = () => {
+    clientClosed = true;
+  };
+  req.on('aborted', markClientClosed);
+  res.on('close', markClientClosed);
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
 
     const chunkText = decoder.decode(value, { stream: true });
-    res.write(scaleSseChunk(chunkText, logContext.displayUsageMultiplier || 1));
     buffered += chunkText;
 
     const events = buffered.split('\n\n');
     buffered = events.pop() || '';
 
     for (const eventText of events) {
+      if (!clientClosed && !res.writableEnded && !res.destroyed) {
+        res.write(`${scaleSseEvent(eventText, displayUsageMultiplier)}\n\n`);
+      }
       const dataLines = eventText
         .split('\n')
         .filter((line) => line.startsWith('data:'))
@@ -2661,15 +2690,7 @@ async function streamSse(
         if (!dataLine || dataLine === '[DONE]') continue;
         try {
           const event = JSON.parse(dataLine);
-          if (event?.message?.usage) {
-            finalUsage = { ...finalUsage, ...event.message.usage };
-          }
-          if (event?.usage) {
-            finalUsage = { ...finalUsage, ...event.usage };
-          }
-          if (event?.type === 'message_delta' && event?.usage) {
-            finalUsage = { ...finalUsage, ...event.usage };
-          }
+          finalUsage = mergeStreamingUsage(finalUsage, event);
           if (event?.type === 'error') {
             errorMessage = event?.error?.message || 'Streaming error';
           }
@@ -2679,14 +2700,19 @@ async function streamSse(
       }
     }
   }
+  if (buffered && !clientClosed && !res.writableEnded && !res.destroyed) {
+    res.write(scaleSseEvent(buffered, displayUsageMultiplier));
+  }
 
-  res.end();
+  req.off('aborted', markClientClosed);
+  res.off('close', markClientClosed);
+  if (!clientClosed && !res.writableEnded && !res.destroyed) res.end();
   writeProxyLog({
     ...logContext,
     usage: finalUsage,
     usageSource: logContext.usageSource,
     usageMultiplier: logContext.displayUsageMultiplier,
-    errorMessage
+    errorMessage: errorMessage || (clientClosed ? 'Client disconnected; upstream drained for final usage' : null)
   });
 }
 
