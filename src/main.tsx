@@ -1513,6 +1513,28 @@ function tr(t: Record<string, string>, key: string, fallback: string) {
   return t[key] || fallback;
 }
 
+function futureTimestamp(value: string | null | undefined, now = Date.now()) {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp > now ? timestamp : null;
+}
+
+function futureDateLabel(value: string | null | undefined) {
+  if (!value) return '';
+  return futureTimestamp(value) ? fullDate(value) : '';
+}
+
+function nextBootstrapRefreshDelay(data: Bootstrap, now = Date.now()) {
+  const resetTimes = data.keys.flatMap((key) => [key.usage.fiveHourResetAt, key.usage.weeklyResetAt]);
+  const timestamps = [data.account.planExpiresAt, ...resetTimes]
+    .map((value) => futureTimestamp(value, now))
+    .filter((value): value is number => value !== null);
+
+  if (!timestamps.length) return null;
+  const nextTimestamp = Math.min(...timestamps);
+  return Math.min(Math.max(nextTimestamp - now + 1500, 1500), 2_147_483_647);
+}
+
 type ToastVariant = 'success' | 'error' | 'info';
 
 type ToastItem = {
@@ -2034,6 +2056,21 @@ function App() {
     await load();
     setRefreshTick((value) => value + 1);
   }, [load]);
+
+  React.useEffect(() => {
+    if (!authToken || !data.user.id) return undefined;
+
+    const delay = nextBootstrapRefreshDelay(data);
+    if (delay === null) return undefined;
+
+    const timer = window.setTimeout(() => {
+      void load();
+    }, delay);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [authToken, data, load]);
 
   function logout() {
     localStorage.removeItem('authToken');
@@ -3649,6 +3686,7 @@ function QuotaUsagePanel({ quota, t }: { quota: QuotaSnapshot; t: Record<string,
     <div className="quota-overview-list">
       {rows.map((row) => {
         const value = pct(row.used, row.limit);
+        const resetLabel = futureDateLabel(row.resetAt);
         return (
           <article className="quota-overview-row" key={row.label}>
             <div className="quota-overview-head">
@@ -3667,7 +3705,7 @@ function QuotaUsagePanel({ quota, t }: { quota: QuotaSnapshot; t: Record<string,
               <span>{Math.round(value)}%</span>
               <span>
                 {t.remaining}: {currency(row.remaining, 'USD')}
-                {row.resetAt ? ` · ${t.nextReset}: ${fullDate(row.resetAt)}` : ''}
+                {resetLabel ? ` · ${t.nextReset}: ${resetLabel}` : ''}
               </span>
             </div>
           </article>
@@ -6199,6 +6237,7 @@ function PlansPanel({
     data.plans.find((plan) => plan.id === 'free');
   const quota = buildAccountQuota(data, accountPlan, primaryKey?.usage) || emptyQuota();
   const currencyCode = accountPlan?.currency || 'CNY';
+  const planResetLabel = futureDateLabel(data.account.planExpiresAt);
 
   async function redeem(event: React.FormEvent) {
     event.preventDefault();
@@ -6303,7 +6342,7 @@ function PlansPanel({
           <div className="current-plan-copy">
             <strong>{data.account.currentPlanRank > 0 ? data.account.currentPlanName || accountPlan?.name : t.currentFreePlan}</strong>
             <p>
-              {data.account.planExpiresAt ? `${t.nextReset}: ${fullDate(data.account.planExpiresAt)}` : t.upgradePlanHint}
+              {planResetLabel ? `${t.nextReset}: ${planResetLabel}` : t.upgradePlanHint}
             </p>
           </div>
           <div className="current-plan-quotas">
