@@ -1139,6 +1139,16 @@ code {
   height: 30px;
 }
 
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.icon-button:disabled:hover {
+  border-color: var(--line);
+  background: var(--surface);
+}
+
 .sidebar-close-button.icon-button,
 .mobile-menu-button.icon-button {
   display: none;
@@ -1191,6 +1201,21 @@ code {
 .secondary-button:disabled {
   cursor: not-allowed;
   opacity: 0.62;
+}
+
+.danger-button:disabled:hover,
+.primary-button:disabled:hover,
+.secondary-button:disabled:hover {
+  transform: none;
+}
+
+.button-spinner {
+  display: inline-block;
+  flex: 0 0 auto;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  animation: spin 0.7s linear infinite;
 }
 
 .secondary-button {
@@ -1317,6 +1342,12 @@ code {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

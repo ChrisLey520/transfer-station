@@ -321,7 +321,7 @@ type UpstreamChannel = {
   id: string;
   channelNumber: number;
   name: string;
-  status: 'active' | 'paused';
+  status: 'active' | 'paused' | 'banned';
   claudeApiUrl: string;
   codexApiUrl: string;
   useIndependentAgentKeys: boolean;
@@ -616,7 +616,9 @@ const dictionary = {
     channelInternalError: '渠道内部错误',
     autoResetAt: '自动重置时间',
     ban: '封禁',
+    banning: '封禁中...',
     unban: '解封',
+    unbanning: '解封中...',
     banned: '封禁',
     notAvailable: '-'
   },
@@ -875,7 +877,9 @@ const dictionary = {
     channelInternalError: '渠道內部錯誤',
     autoResetAt: '自動重置時間',
     ban: '封禁',
+    banning: '封禁中...',
     unban: '解封',
+    unbanning: '解封中...',
     banned: '封禁',
     notAvailable: '-'
   },
@@ -1134,7 +1138,9 @@ const dictionary = {
     channelInternalError: 'Internal channel error',
     autoResetAt: 'Auto reset time',
     ban: 'Ban',
+    banning: 'Banning...',
     unban: 'Unban',
+    unbanning: 'Unbanning...',
     banned: 'Banned',
     notAvailable: '-'
   }
@@ -1669,6 +1675,29 @@ function ChevronUpIcon() {
   return <ChevronDown size={14} style={{ transform: 'rotate(180deg)' }} />;
 }
 
+function ButtonSpinner({ size = 15 }: { size?: number }) {
+  return <span className="button-spinner" style={{ width: size, height: size }} aria-hidden="true" />;
+}
+
+function LoadingContent({
+  children,
+  icon,
+  loading,
+  loadingLabel
+}: {
+  children: React.ReactNode;
+  icon?: React.ReactNode;
+  loading: boolean;
+  loadingLabel?: React.ReactNode;
+}) {
+  return (
+    <>
+      {loading ? <ButtonSpinner /> : icon}
+      {loading ? loadingLabel || children : children}
+    </>
+  );
+}
+
 function Tooltip({ content, children }: { content: React.ReactNode; children: React.ReactElement<any> }) {
   const [open, setOpen] = React.useState(false);
   const { refs, floatingStyles, context } = useFloating({
@@ -1945,8 +1974,9 @@ function App() {
   const [accentTheme, setAccentTheme] = React.useState<AccentTheme>(() => readAccentTheme());
   const [authToken, setAuthToken] = React.useState(localStorage.getItem('authToken') || '');
   const [data, setData] = React.useState<Bootstrap>(defaultBootstrap);
-  const [announcementBusy, setAnnouncementBusy] = React.useState(false);
+  const [announcementAction, setAnnouncementAction] = React.useState<'close' | 'closeToday' | null>(null);
   const [loading, setLoading] = React.useState(true);
+  const [refreshing, setRefreshing] = React.useState(false);
   const [isNavDrawerOpen, setIsNavDrawerOpen] = React.useState(false);
   const [refreshTick, setRefreshTick] = React.useState(0);
   const t = dictionary[language];
@@ -2053,9 +2083,15 @@ function App() {
   }
 
   const handleRefresh = React.useCallback(async () => {
-    await load();
-    setRefreshTick((value) => value + 1);
-  }, [load]);
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await load();
+      setRefreshTick((value) => value + 1);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [load, refreshing]);
 
   React.useEffect(() => {
     if (!authToken || !data.user.id) return undefined;
@@ -2109,8 +2145,8 @@ function App() {
   }, [activeTab, isAdmin, isBootstrapReady]);
 
   async function dismissAnnouncement(action: 'close' | 'closeToday') {
-    if (!authToken || announcementBusy) return;
-    setAnnouncementBusy(true);
+    if (!authToken || announcementAction) return;
+    setAnnouncementAction(action);
     try {
       const response = await fetch('/api/announcement/dismiss', {
         method: 'POST',
@@ -2125,7 +2161,7 @@ function App() {
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
     } finally {
-      setAnnouncementBusy(false);
+      setAnnouncementAction(null);
     }
   }
 
@@ -2246,8 +2282,8 @@ function App() {
                 setAccentTheme={setAccentTheme}
                 t={t}
               />
-              <button type="button" className="icon-button" onClick={() => void handleRefresh()} title={t.refresh}>
-                <RefreshCcw size={17} />
+              <button type="button" className="icon-button" onClick={() => void handleRefresh()} title={t.refresh} disabled={refreshing}>
+                {refreshing ? <ButtonSpinner size={17} /> : <RefreshCcw size={17} />}
               </button>
             </div>
           </header>
@@ -2311,8 +2347,8 @@ function App() {
               setAccentTheme={setAccentTheme}
               t={t}
             />
-            <button type="button" className="icon-button" onClick={() => void handleRefresh()} title={t.refresh}>
-              <RefreshCcw size={17} />
+            <button type="button" className="icon-button" onClick={() => void handleRefresh()} title={t.refresh} disabled={refreshing}>
+              {refreshing ? <ButtonSpinner size={17} /> : <RefreshCcw size={17} />}
             </button>
             <AccountMenu user={data.user} t={t} onLogout={logout} />
           </div>
@@ -2351,7 +2387,7 @@ function App() {
       {data.announcement?.shouldShow ? (
         <AnnouncementModal
           announcement={data.announcement}
-          busy={announcementBusy}
+          busyAction={announcementAction}
           onClose={() => void dismissAnnouncement('close')}
           onCloseToday={() => void dismissAnnouncement('closeToday')}
         />
@@ -2508,7 +2544,12 @@ function AuthPage({
             </span>
           </label>
           <button type="submit" className="primary-button" disabled={submitting}>
-            {mode === 'login' ? t.login : t.register}
+            <LoadingContent
+              loading={submitting}
+              loadingLabel={mode === 'login' ? tr(t, 'loggingIn', '登录中...') : tr(t, 'registering', '注册中...')}
+            >
+              {mode === 'login' ? t.login : t.register}
+            </LoadingContent>
           </button>
         </form>
         <div className="auth-footer">
@@ -2834,7 +2875,9 @@ function OrdersPanel({ headers, refreshTick, t }: { headers: HeadersInit; refres
             required
           />
           <button type="submit" className="primary-button" disabled={isClaiming || !orderId.trim()}>
-            {isClaiming ? tr(t, 'verifying', '验证中...') : tr(t, 'claimOrderCode', '领取兑换码')}
+            <LoadingContent loading={isClaiming} loadingLabel={tr(t, 'verifying', '验证中...')}>
+              {tr(t, 'claimOrderCode', '领取兑换码')}
+            </LoadingContent>
           </button>
         </form>
         {claimResult.length ? (
@@ -2862,9 +2905,10 @@ function OrdersPanel({ headers, refreshTick, t }: { headers: HeadersInit; refres
             <h2>{tr(t, 'claimRecordTitle', '领取记录')}</h2>
             <p>{tr(t, 'claimRecordHint', '仅展示近 30 天内由当前账号领取的订单。')}</p>
           </div>
-          <button type="button" className="secondary-button" onClick={() => void loadClaimHistory()}>
-            <RefreshCcw size={16} />
-            {t.refresh}
+          <button type="button" className="secondary-button" onClick={() => void loadClaimHistory()} disabled={isLoadingHistory}>
+            <LoadingContent loading={isLoadingHistory} icon={<RefreshCcw size={16} />} loadingLabel={tr(t, 'refreshing', '刷新中...')}>
+              {t.refresh}
+            </LoadingContent>
           </button>
         </div>
         {isLoadingHistory ? <div className="loading-line" /> : null}
@@ -3020,7 +3064,7 @@ function SliderVerification({
           {t.slideVerify}
         </span>
         <button type="button" onClick={() => void loadChallenge()} disabled={isLoading || isVerifying}>
-          <RefreshCcw size={13} />
+          {isLoading ? <ButtonSpinner size={13} /> : <RefreshCcw size={13} />}
         </button>
       </div>
       <div className="puzzle-board" style={trackStyle}>
@@ -3731,11 +3775,16 @@ function KeysPanel({
   const [selectedAgent, setSelectedAgent] = React.useState<'claude' | 'codex'>('claude');
   const [revokeTarget, setRevokeTarget] = React.useState<ApiKey | null>(null);
   const [isRevoking, setIsRevoking] = React.useState(false);
+  const [isCreatingKey, setIsCreatingKey] = React.useState(false);
+  const [copyingKeyId, setCopyingKeyId] = React.useState('');
+  const [importingKeyId, setImportingKeyId] = React.useState('');
   const [name, setName] = React.useState('');
   const [copiedId, setCopiedId] = React.useState('');
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (isCreatingKey) return;
+    setIsCreatingKey(true);
     try {
       const response = await fetch('/api/user/keys', {
         method: 'POST',
@@ -3753,6 +3802,8 @@ function KeysPanel({
       showSuccessToast(t.createdKeySuccess);
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setIsCreatingKey(false);
     }
   }
 
@@ -3772,6 +3823,7 @@ function KeysPanel({
   }
 
   async function revoke(apiKey: ApiKey) {
+    if (isRevoking) return;
     setIsRevoking(true);
     try {
       const response = await fetch(`/api/user/keys/${apiKey.id}`, { method: 'DELETE', headers });
@@ -3790,19 +3842,33 @@ function KeysPanel({
   }
 
   async function copyExistingKey(apiKey: ApiKey) {
-    const secret = await fetchSecret(apiKey.id);
-    if (!secret) return;
-    await navigator.clipboard.writeText(secret.key);
-    setCopiedId(apiKey.id);
-    window.setTimeout(() => setCopiedId(''), 1400);
+    if (copyingKeyId) return;
+    setCopyingKeyId(apiKey.id);
+    try {
+      const secret = await fetchSecret(apiKey.id);
+      if (!secret) return;
+      await navigator.clipboard.writeText(secret.key);
+      setCopiedId(apiKey.id);
+      window.setTimeout(() => setCopiedId(''), 1400);
+    } finally {
+      setCopyingKeyId('');
+    }
   }
 
   async function useWithCcSwitch(apiKey: ApiKey, app: 'codex' | 'claude') {
-    const secret = await fetchSecret(apiKey.id);
-    if (!secret) return;
-    window.location.href = secret.ccSwitch[app];
-    setUseTarget(null);
+    if (importingKeyId) return;
+    setImportingKeyId(apiKey.id);
+    try {
+      const secret = await fetchSecret(apiKey.id);
+      if (!secret) return;
+      window.location.href = secret.ccSwitch[app];
+      setUseTarget(null);
+    } finally {
+      setImportingKeyId('');
+    }
   }
+
+  const isImportingUseTarget = Boolean(useTarget && importingKeyId === useTarget.id);
 
   return (
     <section className="content-grid">
@@ -3818,6 +3884,7 @@ function KeysPanel({
           keys={data.keys}
           t={t}
           copiedId={copiedId}
+          copyingKeyId={copyingKeyId}
           onCopy={copyExistingKey}
           onUse={(apiKey) => {
             setUseTarget(apiKey);
@@ -3849,12 +3916,14 @@ function KeysPanel({
                   setIsCreateOpen(false);
                   setName('');
                 }}
+                disabled={isCreatingKey}
               >
                 {t.cancel}
               </button>
-              <button type="submit" className="primary-button">
-                <Plus size={17} />
-                {t.createKey}
+              <button type="submit" className="primary-button" disabled={isCreatingKey}>
+                <LoadingContent loading={isCreatingKey} icon={<Plus size={17} />} loadingLabel={tr(t, 'creating', '创建中...')}>
+                  {t.createKey}
+                </LoadingContent>
               </button>
             </div>
           </form>
@@ -3887,12 +3956,13 @@ function KeysPanel({
               </button>
             </div>
             <div className="modal-actions">
-              <button type="button" className="secondary-button" onClick={() => setUseTarget(null)}>
+              <button type="button" className="secondary-button" onClick={() => setUseTarget(null)} disabled={isImportingUseTarget}>
                 {t.cancel}
               </button>
-              <button type="button" className="primary-button" onClick={() => useWithCcSwitch(useTarget, selectedAgent)}>
-                <Play size={16} />
-                {t.confirmImport}
+              <button type="button" className="primary-button" onClick={() => useWithCcSwitch(useTarget, selectedAgent)} disabled={isImportingUseTarget}>
+                <LoadingContent loading={isImportingUseTarget} icon={<Play size={16} />} loadingLabel={tr(t, 'importing', '导入中...')}>
+                  {t.confirmImport}
+                </LoadingContent>
               </button>
             </div>
           </div>
@@ -3918,8 +3988,9 @@ function KeysPanel({
                 {t.cancel}
               </button>
               <button type="button" className="danger-button" onClick={() => revoke(revokeTarget)} disabled={isRevoking}>
-                <Trash2 size={16} />
-                {t.delete}
+                <LoadingContent loading={isRevoking} icon={<Trash2 size={16} />} loadingLabel={tr(t, 'deleting', '删除中...')}>
+                  {t.delete}
+                </LoadingContent>
               </button>
             </div>
           </div>
@@ -3933,6 +4004,7 @@ function KeyRows({
   keys,
   t,
   copiedId,
+  copyingKeyId,
   onCopy,
   onUse,
   onCreate,
@@ -3941,6 +4013,7 @@ function KeyRows({
   keys: ApiKey[];
   t: Record<string, string>;
   copiedId: string;
+  copyingKeyId: string;
   onCopy: (apiKey: ApiKey) => Promise<void>;
   onUse: (apiKey: ApiKey) => void;
   onCreate: () => void;
@@ -3967,33 +4040,36 @@ function KeyRows({
         <span>{t.todayUsage}</span>
         <span>{t.action}</span>
       </div>
-      {keys.map((apiKey) => (
-        <article className="key-table-row" key={apiKey.id}>
-          <div className="key-main">
-            <div>
-              <strong>{apiKey.name || '-'}</strong>
+      {keys.map((apiKey) => {
+        const isCopying = copyingKeyId === apiKey.id;
+        return (
+          <article className="key-table-row" key={apiKey.id}>
+            <div className="key-main">
+              <div>
+                <strong>{apiKey.name || '-'}</strong>
+              </div>
             </div>
-          </div>
-          <div className="key-secret-cell">
-            <code>{apiKey.keyPreview || '-'}</code>
-            <button type="button" className="icon-button compact" onClick={() => onCopy(apiKey)} title={t.copy}>
-              {copiedId === apiKey.id ? <Check size={15} /> : <Copy size={15} />}
-            </button>
-          </div>
-          <span>{apiKey.createdAt ? fullDate(apiKey.createdAt) : '-'}</span>
-          <span>{apiKey.lastUsedAt ? fullDate(apiKey.lastUsedAt) : '-'}</span>
-          <span>{currency(apiKey.todayUsageCents, 'USD')}</span>
-          <div className="row-actions">
-            <button type="button" className="secondary-button" onClick={() => onUse(apiKey)}>
-              <Play size={15} />
-              {t.use}
-            </button>
-            <button type="button" className="icon-button danger" onClick={() => onRevoke?.(apiKey)} title={t.delete}>
-              <Trash2 size={16} />
-            </button>
-          </div>
-        </article>
-      ))}
+            <div className="key-secret-cell">
+              <code>{apiKey.keyPreview || '-'}</code>
+              <button type="button" className="icon-button compact" onClick={() => onCopy(apiKey)} title={t.copy} disabled={Boolean(copyingKeyId)}>
+                {isCopying ? <ButtonSpinner size={15} /> : copiedId === apiKey.id ? <Check size={15} /> : <Copy size={15} />}
+              </button>
+            </div>
+            <span>{apiKey.createdAt ? fullDate(apiKey.createdAt) : '-'}</span>
+            <span>{apiKey.lastUsedAt ? fullDate(apiKey.lastUsedAt) : '-'}</span>
+            <span>{currency(apiKey.todayUsageCents, 'USD')}</span>
+            <div className="row-actions">
+              <button type="button" className="secondary-button" onClick={() => onUse(apiKey)}>
+                <Play size={15} />
+                {t.use}
+              </button>
+              <button type="button" className="icon-button danger" onClick={() => onRevoke?.(apiKey)} title={t.delete}>
+                <Trash2 size={16} />
+              </button>
+            </div>
+          </article>
+        );
+      })}
     </div>
   );
 }
@@ -4040,10 +4116,13 @@ function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersIn
   });
   const [generatedCards, setGeneratedCards] = React.useState<AdminGiftCard[]>([]);
   const [loading, setLoading] = React.useState(false);
+  const [giftCardPagingAction, setGiftCardPagingAction] = React.useState<'prev' | 'next' | null>(null);
+  const [giftCardFilterAction, setGiftCardFilterAction] = React.useState<GiftCardFormType | null>(null);
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [copiedCode, setCopiedCode] = React.useState('');
   const [revokeTarget, setRevokeTarget] = React.useState<AdminGiftCard | null>(null);
   const [isRevoking, setIsRevoking] = React.useState(false);
+  const [isCreatingGiftCards, setIsCreatingGiftCards] = React.useState(false);
   const [isGiftCardManagementExpanded, setIsGiftCardManagementExpanded] = React.useState(true);
   const [activeGiftCardType, setActiveGiftCardType] = React.useState<GiftCardFormType>('plan');
   const [giftCardPageNumber, setGiftCardPageNumber] = React.useState(1);
@@ -4084,6 +4163,8 @@ function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersIn
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
     } finally {
       setLoading(false);
+      setGiftCardPagingAction(null);
+      setGiftCardFilterAction(null);
     }
   }, [activeGiftCardType, giftCardPageNumber, headers, t.requestFailed]);
 
@@ -4100,6 +4181,8 @@ function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersIn
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (isCreatingGiftCards) return;
+    setIsCreatingGiftCards(true);
     const body =
       formType === 'credit'
         ? {
@@ -4135,6 +4218,8 @@ function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersIn
       showSuccessToast(tr(t, 'giftCardsCreated', '礼品码已生成。'));
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setIsCreatingGiftCards(false);
     }
   }
 
@@ -4152,6 +4237,7 @@ function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersIn
   }
 
   async function revokeGiftCard(card: AdminGiftCard) {
+    if (isRevoking) return;
     setIsRevoking(true);
     try {
       const response = await fetch(`/api/gift-cards/${encodeURIComponent(card.code)}/revoke`, {
@@ -4178,6 +4264,8 @@ function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersIn
   const creditGiftCardCount = giftCardPage.typeCounts.credit || 0;
 
   function changeGiftCardType(nextType: GiftCardFormType) {
+    if (loading || nextType === activeGiftCardType) return;
+    setGiftCardFilterAction(nextType);
     setActiveGiftCardType(nextType);
     setGiftCardPageNumber(1);
   }
@@ -4214,16 +4302,22 @@ function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersIn
                 type="button"
                 className={activeGiftCardType === 'plan' ? 'gift-card-tab active' : 'gift-card-tab'}
                 onClick={() => changeGiftCardType('plan')}
+                disabled={loading}
               >
-                {tr(t, 'giftCardPlanType', '套餐')}
+                <LoadingContent loading={giftCardFilterAction === 'plan'} loadingLabel={tr(t, 'giftCardPlanType', '套餐')}>
+                  {tr(t, 'giftCardPlanType', '套餐')}
+                </LoadingContent>
                 <span>{planGiftCardCount}</span>
               </button>
               <button
                 type="button"
                 className={activeGiftCardType === 'credit' ? 'gift-card-tab active' : 'gift-card-tab'}
                 onClick={() => changeGiftCardType('credit')}
+                disabled={loading}
               >
-                {tr(t, 'giftCardCreditType', '余额')}
+                <LoadingContent loading={giftCardFilterAction === 'credit'} loadingLabel={tr(t, 'giftCardCreditType', '余额')}>
+                  {tr(t, 'giftCardCreditType', '余额')}
+                </LoadingContent>
                 <span>{creditGiftCardCount}</span>
               </button>
             </div>
@@ -4240,11 +4334,14 @@ function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersIn
                 <button
                   type="button"
                   className="icon-button compact"
-                  onClick={() => setGiftCardPageNumber((value) => value - 1)}
-                  disabled={giftCardPageNumber <= 1}
+                  onClick={() => {
+                    setGiftCardPagingAction('prev');
+                    setGiftCardPageNumber((value) => value - 1);
+                  }}
+                  disabled={loading || giftCardPageNumber <= 1}
                   title={t.previousPage}
                 >
-                  <ChevronLeft size={16} />
+                  {giftCardPagingAction === 'prev' ? <ButtonSpinner size={16} /> : <ChevronLeft size={16} />}
                 </button>
                 <strong>
                   {giftCardPageNumber} / {pageCount}
@@ -4252,11 +4349,14 @@ function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersIn
                 <button
                   type="button"
                   className="icon-button compact"
-                  onClick={() => setGiftCardPageNumber((value) => value + 1)}
-                  disabled={giftCardPageNumber >= pageCount}
+                  onClick={() => {
+                    setGiftCardPagingAction('next');
+                    setGiftCardPageNumber((value) => value + 1);
+                  }}
+                  disabled={loading || giftCardPageNumber >= pageCount}
                   title={t.nextPage}
                 >
-                  <ChevronRight size={16} />
+                  {giftCardPagingAction === 'next' ? <ButtonSpinner size={16} /> : <ChevronRight size={16} />}
                 </button>
               </div>
             </div>
@@ -4364,12 +4464,13 @@ function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersIn
               </div>
             ) : null}
             <div className="modal-actions">
-              <button type="button" className="secondary-button" onClick={() => setIsCreateOpen(false)}>
+              <button type="button" className="secondary-button" onClick={() => setIsCreateOpen(false)} disabled={isCreatingGiftCards}>
                 {t.cancel}
               </button>
-              <button type="submit" className="primary-button" disabled={formType === 'plan' && !eligiblePlans.length}>
-                <Gift size={16} />
-                {tr(t, 'createGiftCard', '生成礼品码')}
+              <button type="submit" className="primary-button" disabled={isCreatingGiftCards || (formType === 'plan' && !eligiblePlans.length)}>
+                <LoadingContent loading={isCreatingGiftCards} icon={<Gift size={16} />} loadingLabel={tr(t, 'creating', '生成中...')}>
+                  {tr(t, 'createGiftCard', '生成礼品码')}
+                </LoadingContent>
               </button>
             </div>
           </form>
@@ -4390,8 +4491,9 @@ function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersIn
                 {t.cancel}
               </button>
               <button type="button" className="danger-button" onClick={() => revokeGiftCard(revokeTarget)} disabled={isRevoking}>
-                <Ban size={16} />
-                {tr(t, 'revokeGiftCard', '撤销兑换码')}
+                <LoadingContent loading={isRevoking} icon={<Ban size={16} />} loadingLabel={tr(t, 'revoking', '撤销中...')}>
+                  {tr(t, 'revokeGiftCard', '撤销兑换码')}
+                </LoadingContent>
               </button>
             </div>
           </div>
@@ -4494,6 +4596,10 @@ function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: He
   const [sessionExpiresAt, setSessionExpiresAt] = React.useState('');
   const [permitShopId, setPermitShopId] = React.useState('');
   const [authorizingTaobao, setAuthorizingTaobao] = React.useState(false);
+  const [savingShop, setSavingShop] = React.useState(false);
+  const [permittingShopId, setPermittingShopId] = React.useState('');
+  const [savingMapping, setSavingMapping] = React.useState(false);
+  const [deletingMappingId, setDeletingMappingId] = React.useState('');
   const taobaoProducts = React.useMemo<PurchaseProductOption[]>(() => [...plans, ...creditProductOptions()], [plans]);
   const [selectedProductKey, setSelectedProductKey] = React.useState(() => {
     const first = plans[0] || creditProductOptions()[0];
@@ -4598,6 +4704,8 @@ function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: He
 
   async function saveShop(event: React.FormEvent) {
     event.preventDefault();
+    if (savingShop) return;
+    setSavingShop(true);
     try {
       const response = await fetch('/api/taobao/shops', {
         method: 'POST',
@@ -4624,10 +4732,13 @@ function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: He
       showSuccessToast(tr(t, 'taobaoShopSaved', '淘宝店铺授权已保存。'));
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setSavingShop(false);
     }
   }
 
   async function startTaobaoOauth() {
+    if (authorizingTaobao) return;
     try {
       setAuthorizingTaobao(true);
       const response = await fetch('/api/taobao/oauth/start', { headers });
@@ -4641,6 +4752,11 @@ function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: He
       if (!authorizeUrl) throw new Error('获取淘宝授权链接失败。');
       const popup = window.open(authorizeUrl, 'taobao-oauth', 'width=720,height=760');
       if (!popup) throw new Error('浏览器拦截了授权窗口，请允许弹窗后重试。');
+      const popupTimer = window.setInterval(() => {
+        if (!popup.closed) return;
+        window.clearInterval(popupTimer);
+        setAuthorizingTaobao(false);
+      }, 700);
     } catch (error) {
       setAuthorizingTaobao(false);
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
@@ -4649,6 +4765,8 @@ function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: He
 
   async function permitMessages(targetShopId = permitShopId) {
     if (!targetShopId) return;
+    if (permittingShopId) return;
+    setPermittingShopId(targetShopId);
     try {
       const response = await fetch(`/api/taobao/shops/${encodeURIComponent(targetShopId)}/permit`, {
         method: 'POST',
@@ -4664,11 +4782,15 @@ function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: He
       showSuccessToast(tr(t, 'taobaoPermitSaved', '淘宝 TMC 消息服务已开通。'));
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setPermittingShopId('');
     }
   }
 
   async function saveMapping(event: React.FormEvent) {
     event.preventDefault();
+    if (savingMapping) return;
+    setSavingMapping(true);
     const body =
       giftType === 'credit'
         ? {
@@ -4708,10 +4830,14 @@ function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: He
       showSuccessToast(tr(t, 'taobaoMappingSaved', '淘宝商品映射已保存。'));
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setSavingMapping(false);
     }
   }
 
   async function deleteMapping(mapping: TaobaoProductMapping) {
+    if (deletingMappingId) return;
+    setDeletingMappingId(mapping.id);
     try {
       const response = await fetch(`/api/taobao/product-mappings/${mapping.id}`, { method: 'DELETE', headers });
       const payload = await readJsonResponse(response);
@@ -4722,6 +4848,8 @@ function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: He
       setMappings((payload as { mappings: TaobaoProductMapping[] }).mappings || []);
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setDeletingMappingId('');
     }
   }
 
@@ -4743,9 +4871,10 @@ function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: He
           </div>
           <p>{tr(t, 'taobaoAutomationHint', 'TMC 消息触发后按商品/SKU 映射自动生成兑换码，买家登录后可到「我的订单」自助领取。')}</p>
         </div>
-        <button type="button" className="secondary-button" onClick={() => void load()}>
-          <RefreshCcw size={16} />
-          {t.refresh}
+        <button type="button" className="secondary-button" onClick={() => void load()} disabled={loading}>
+          <LoadingContent loading={loading} icon={<RefreshCcw size={16} />} loadingLabel={tr(t, 'refreshing', '刷新中...')}>
+            {t.refresh}
+          </LoadingContent>
         </button>
       </div>
       {isExpanded ? (
@@ -4759,8 +4888,9 @@ function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: He
                   <p>推荐直接跳转淘宝授权，系统会自动写入 SessionKey 和过期时间。</p>
                 </div>
                 <button type="button" className="secondary-button taobao-oauth-button" onClick={() => void startTaobaoOauth()} disabled={authorizingTaobao}>
-                  <KeyRound size={16} />
-                  {authorizingTaobao ? '等待淘宝授权…' : '点击授权淘宝店铺'}
+                  <LoadingContent loading={authorizingTaobao} icon={<KeyRound size={16} />} loadingLabel="等待淘宝授权...">
+                    点击授权淘宝店铺
+                  </LoadingContent>
                 </button>
               </div>
               <label>
@@ -4779,9 +4909,10 @@ function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: He
                 过期时间
                 <input type="datetime-local" value={sessionExpiresAt} onChange={(event) => setSessionExpiresAt(event.target.value)} />
               </label>
-              <button type="submit" className="primary-button">
-                <KeyRound size={16} />
-                保存授权
+              <button type="submit" className="primary-button" disabled={savingShop}>
+                <LoadingContent loading={savingShop} icon={<KeyRound size={16} />} loadingLabel={tr(t, 'saving', '保存中...')}>
+                  保存授权
+                </LoadingContent>
               </button>
             </form>
 
@@ -4799,9 +4930,10 @@ function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: He
                     </option>
                   ))}
                 </select>
-                <button type="button" className="secondary-button" disabled={!permitShopId} onClick={() => void permitMessages()}>
-                  <ShieldCheck size={16} />
-                  开通 TMC
+                <button type="button" className="secondary-button" disabled={!permitShopId || Boolean(permittingShopId)} onClick={() => void permitMessages()}>
+                  <LoadingContent loading={permittingShopId === permitShopId} icon={<ShieldCheck size={16} />} loadingLabel="开通中...">
+                    开通 TMC
+                  </LoadingContent>
                 </button>
               </div>
             </div>
@@ -4873,9 +5005,10 @@ function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: He
               {tr(t, 'giftCardQuantity', '生成数量')}
               <input type="number" min="1" max="20" value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />
             </label>
-            <button type="submit" className="primary-button">
-              <Plus size={16} />
-              {tr(t, 'saveMapping', '保存映射')}
+            <button type="submit" className="primary-button" disabled={savingMapping}>
+              <LoadingContent loading={savingMapping} icon={<Plus size={16} />} loadingLabel={tr(t, 'saving', '保存中...')}>
+                {tr(t, 'saveMapping', '保存映射')}
+              </LoadingContent>
             </button>
           </form>
 
@@ -4893,9 +5026,10 @@ function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: He
                     <span className={shop.messagePermittedAt ? 'status-code ok' : 'status-code error'}>
                       {shop.messagePermittedAt ? 'TMC' : '未开通'}
                     </span>
-                    <button type="button" className="secondary-button" onClick={() => void permitMessages(shop.id)}>
-                      <ShieldCheck size={15} />
-                      TMC
+                    <button type="button" className="secondary-button" onClick={() => void permitMessages(shop.id)} disabled={Boolean(permittingShopId)}>
+                      <LoadingContent loading={permittingShopId === shop.id} icon={<ShieldCheck size={15} />} loadingLabel="开通中...">
+                        TMC
+                      </LoadingContent>
                     </button>
                   </article>
                 )) : <Empty t={t} />}
@@ -4911,8 +5045,8 @@ function TaobaoAutomationPanel({ headers, plans, refreshTick, t }: { headers: He
                       <span>淘宝商品 {mapping.numIid}{mapping.skuId ? ` / SKU ${mapping.skuId}` : ''}</span>
                     </div>
                     <span>{mappingProductLabel(mapping)}</span>
-                    <button type="button" className="icon-button danger" onClick={() => deleteMapping(mapping)} title={t.delete}>
-                      <Trash2 size={15} />
+                    <button type="button" className="icon-button danger" onClick={() => deleteMapping(mapping)} title={t.delete} disabled={Boolean(deletingMappingId)}>
+                      {deletingMappingId === mapping.id ? <ButtonSpinner size={15} /> : <Trash2 size={15} />}
                     </button>
                   </article>
                 )) : <Empty t={t} />}
@@ -5040,8 +5174,9 @@ function ProductLinksPanel({
             <p>{tr(t, 'productManagementHint', '维护套餐和额度在淘宝、闲鱼的商品链接。')}</p>
           </div>
           <button type="submit" className="primary-button" disabled={saving}>
-            <ShoppingBag size={17} />
-            {tr(t, 'saveProducts', '保存商品链接')}
+            <LoadingContent loading={saving} icon={<ShoppingBag size={17} />} loadingLabel={tr(t, 'saving', '保存中...')}>
+              {tr(t, 'saveProducts', '保存商品链接')}
+            </LoadingContent>
           </button>
         </div>
         {loading ? <div className="loading-line" /> : null}
@@ -5250,6 +5385,15 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
   const [modelRateForm, setModelRateForm] = React.useState(emptyModelRateForm);
   const [deleteTarget, setDeleteTarget] = React.useState<UpstreamChannel | null>(null);
   const [keyDeleteTarget, setKeyDeleteTarget] = React.useState<UpstreamKeyDeleteTarget | null>(null);
+  const [channelStatusUpdatingId, setChannelStatusUpdatingId] = React.useState<string | null>(null);
+  const [savingChannel, setSavingChannel] = React.useState(false);
+  const [deletingChannelId, setDeletingChannelId] = React.useState('');
+  const [savingKey, setSavingKey] = React.useState(false);
+  const [savingEditedKey, setSavingEditedKey] = React.useState(false);
+  const [updatingKeyStatusId, setUpdatingKeyStatusId] = React.useState('');
+  const [savingModelRate, setSavingModelRate] = React.useState(false);
+  const [deletingModelRateId, setDeletingModelRateId] = React.useState('');
+  const [deletingKeyId, setDeletingKeyId] = React.useState('');
 
   const loadChannels = React.useCallback(async () => {
     setLoading(true);
@@ -5285,6 +5429,8 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
 
   async function saveChannel(event: React.FormEvent) {
     event.preventDefault();
+    if (savingChannel) return;
+    setSavingChannel(true);
     const isEdit = Boolean(channelForm.id);
     const body = {
       name: channelForm.name,
@@ -5317,10 +5463,14 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
       showSuccessToast(tr(t, 'channelSaved', '渠道已保存。'));
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setSavingChannel(false);
     }
   }
 
   async function deleteChannel(channel: UpstreamChannel) {
+    if (deletingChannelId) return;
+    setDeletingChannelId(channel.id);
     try {
       const response = await fetch(`/api/upstream-channels/${channel.id}`, { method: 'DELETE', headers });
       const payload = await readJsonResponse(response);
@@ -5332,12 +5482,39 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
       setDeleteTarget(null);
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setDeletingChannelId('');
+    }
+  }
+
+  async function updateChannelStatus(channel: UpstreamChannel, status: UpstreamChannel['status']) {
+    if (channelStatusUpdatingId) return;
+    setChannelStatusUpdatingId(channel.id);
+    try {
+      const response = await fetch(`/api/upstream-channels/${channel.id}/status`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ status })
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setChannels((payload as { channels: UpstreamChannel[] }).channels || []);
+      showSuccessToast(status === 'banned' ? tr(t, 'banned', '封禁') : tr(t, 'unban', '解封'));
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setChannelStatusUpdatingId((current) => (current === channel.id ? null : current));
     }
   }
 
   async function saveKey(event: React.FormEvent) {
     event.preventDefault();
     if (!keyTarget) return;
+    if (savingKey) return;
+    setSavingKey(true);
     try {
       const response = await fetch(`/api/upstream-channels/${keyTarget.id}/keys`, {
         method: 'POST',
@@ -5365,6 +5542,8 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
       showSuccessToast(tr(t, 'upstreamKeySaved', '上游 Key 已保存。'));
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setSavingKey(false);
     }
   }
 
@@ -5379,6 +5558,8 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
   async function saveEditedKey(event: React.FormEvent) {
     event.preventDefault();
     if (!keyEditTarget) return;
+    if (savingEditedKey) return;
+    setSavingEditedKey(true);
 
     const body: {
       name: string;
@@ -5412,10 +5593,14 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
       showSuccessToast(tr(t, 'upstreamKeySaved', '上游 Key 已保存。'));
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setSavingEditedKey(false);
     }
   }
 
   async function updateKeyStatus(channel: UpstreamChannel, key: UpstreamChannelKey, status: UpstreamChannelKey['status']) {
+    if (updatingKeyStatusId) return;
+    setUpdatingKeyStatusId(key.id);
     try {
       const response = await fetch(`/api/upstream-channels/${channel.id}/keys/${key.id}`, {
         method: 'PATCH',
@@ -5431,6 +5616,8 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
       showSuccessToast(status === 'banned' ? tr(t, 'banned', '封禁') : status === 'active' ? tr(t, 'available', '可用') : t.pause);
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setUpdatingKeyStatusId('');
     }
   }
 
@@ -5442,6 +5629,8 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
   async function saveModelRate(event: React.FormEvent) {
     event.preventDefault();
     if (!modelRateTarget) return;
+    if (savingModelRate) return;
+    setSavingModelRate(true);
     const isEdit = Boolean(modelRateTarget.rate);
     try {
       const response = await fetch(
@@ -5465,10 +5654,14 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
       showSuccessToast(tr(t, 'modelRateSaved', '模型计费已保存。'));
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setSavingModelRate(false);
     }
   }
 
   async function deleteModelRate(channel: UpstreamChannel, rate: UpstreamModelRate) {
+    if (deletingModelRateId) return;
+    setDeletingModelRateId(rate.id);
     try {
       const response = await fetch(`/api/upstream-channels/${channel.id}/model-rates/${rate.id}`, { method: 'DELETE', headers });
       const payload = await readJsonResponse(response);
@@ -5479,10 +5672,14 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
       setChannels((payload as { channels: UpstreamChannel[] }).channels || []);
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setDeletingModelRateId('');
     }
   }
 
   async function deleteKey(channel: UpstreamChannel, key: UpstreamChannelKey) {
+    if (deletingKeyId) return;
+    setDeletingKeyId(key.id);
     try {
       const response = await fetch(`/api/upstream-channels/${channel.id}/keys/${key.id}`, { method: 'DELETE', headers });
       const payload = await readJsonResponse(response);
@@ -5494,6 +5691,8 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
       setKeyDeleteTarget(null);
     } catch (error) {
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setDeletingKeyId('');
     }
   }
 
@@ -5540,6 +5739,8 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
                 isExpanded={expandedChannelIds.has(channel.id)}
                 onToggle={() => toggleChannel(channel.id)}
                 onEdit={() => openEdit(channel)}
+                onChannelStatus={(status) => updateChannelStatus(channel, status)}
+                isChannelStatusUpdating={channelStatusUpdatingId === channel.id}
                 onAddKey={() => {
                   setKeyTarget(channel);
                   setKeyAgentType(channel.useIndependentAgentKeys ? 'claude-code' : 'shared');
@@ -5555,6 +5756,8 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
                 onAddModelRate={() => openModelRate(channel)}
                 onEditModelRate={(rate) => openModelRate(channel, rate)}
                 onDeleteModelRate={(rate) => deleteModelRate(channel, rate)}
+                updatingKeyStatusId={updatingKeyStatusId}
+                deletingModelRateId={deletingModelRateId}
               />
             ))}
           </div>
@@ -5588,6 +5791,7 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
                 >
                   <option value="active">{tr(t, 'active', '启用')}</option>
                   <option value="paused">{t.pause}</option>
+                  <option value="banned">{tr(t, 'banned', '封禁')}</option>
                 </select>
               </label>
               <label className="wide-field">
@@ -5699,12 +5903,13 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
               <span>{tr(t, 'useIndependentAgentKeys', 'Claude Code 与 Codex 使用独立 API Key')}</span>
             </label>
             <div className="modal-actions">
-              <button type="button" className="secondary-button" onClick={() => setIsChannelOpen(false)}>
+              <button type="button" className="secondary-button" onClick={() => setIsChannelOpen(false)} disabled={savingChannel}>
                 {t.cancel}
               </button>
-              <button type="submit" className="primary-button">
-                <Check size={16} />
-                {t.savePlan}
+              <button type="submit" className="primary-button" disabled={savingChannel}>
+                <LoadingContent loading={savingChannel} icon={<Check size={16} />} loadingLabel={tr(t, 'saving', '保存中...')}>
+                  {t.savePlan}
+                </LoadingContent>
               </button>
             </div>
           </form>
@@ -5759,12 +5964,13 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
               </label>
             ) : null}
             <div className="modal-actions">
-              <button type="button" className="secondary-button" onClick={() => setKeyTarget(null)}>
+              <button type="button" className="secondary-button" onClick={() => setKeyTarget(null)} disabled={savingKey}>
                 {t.cancel}
               </button>
-              <button type="submit" className="primary-button">
-                <Plus size={16} />
-                {tr(t, 'addUpstreamKey', '添加上游 Key')}
+              <button type="submit" className="primary-button" disabled={savingKey}>
+                <LoadingContent loading={savingKey} icon={<Plus size={16} />} loadingLabel={tr(t, 'saving', '保存中...')}>
+                  {tr(t, 'addUpstreamKey', '添加上游 Key')}
+                </LoadingContent>
               </button>
             </div>
           </form>
@@ -5781,12 +5987,13 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
               </div>
             </div>
             <div className="modal-actions">
-              <button type="button" className="secondary-button" onClick={() => setDeleteTarget(null)}>
+              <button type="button" className="secondary-button" onClick={() => setDeleteTarget(null)} disabled={Boolean(deletingChannelId)}>
                 {t.cancel}
               </button>
-              <button type="button" className="danger-button" onClick={() => deleteChannel(deleteTarget)}>
-                <Trash2 size={16} />
-                {t.delete}
+              <button type="button" className="danger-button" onClick={() => deleteChannel(deleteTarget)} disabled={Boolean(deletingChannelId)}>
+                <LoadingContent loading={deletingChannelId === deleteTarget.id} icon={<Trash2 size={16} />} loadingLabel={tr(t, 'deleting', '删除中...')}>
+                  {t.delete}
+                </LoadingContent>
               </button>
             </div>
           </div>
@@ -5837,12 +6044,13 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
               </label>
             ) : null}
             <div className="modal-actions">
-              <button type="button" className="secondary-button" onClick={() => setKeyEditTarget(null)}>
+              <button type="button" className="secondary-button" onClick={() => setKeyEditTarget(null)} disabled={savingEditedKey}>
                 {t.cancel}
               </button>
-              <button type="submit" className="primary-button">
-                <Check size={16} />
-                {t.savePlan}
+              <button type="submit" className="primary-button" disabled={savingEditedKey}>
+                <LoadingContent loading={savingEditedKey} icon={<Check size={16} />} loadingLabel={tr(t, 'saving', '保存中...')}>
+                  {t.savePlan}
+                </LoadingContent>
               </button>
             </div>
           </form>
@@ -5938,12 +6146,13 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
               <span>{tr(t, 'defaultModelRate', '作为该 Agent 的默认计费')}</span>
             </label>
             <div className="modal-actions">
-              <button type="button" className="secondary-button" onClick={() => setModelRateTarget(null)}>
+              <button type="button" className="secondary-button" onClick={() => setModelRateTarget(null)} disabled={savingModelRate}>
                 {t.cancel}
               </button>
-              <button type="submit" className="primary-button">
-                <Check size={16} />
-                {t.savePlan}
+              <button type="submit" className="primary-button" disabled={savingModelRate}>
+                <LoadingContent loading={savingModelRate} icon={<Check size={16} />} loadingLabel={tr(t, 'saving', '保存中...')}>
+                  {t.savePlan}
+                </LoadingContent>
               </button>
             </div>
           </form>
@@ -5962,12 +6171,13 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
               </div>
             </div>
             <div className="modal-actions">
-              <button type="button" className="secondary-button" onClick={() => setKeyDeleteTarget(null)}>
+              <button type="button" className="secondary-button" onClick={() => setKeyDeleteTarget(null)} disabled={Boolean(deletingKeyId)}>
                 {t.cancel}
               </button>
-              <button type="button" className="danger-button" onClick={() => deleteKey(keyDeleteTarget.channel, keyDeleteTarget.key)}>
-                <Trash2 size={16} />
-                {t.delete}
+              <button type="button" className="danger-button" onClick={() => deleteKey(keyDeleteTarget.channel, keyDeleteTarget.key)} disabled={Boolean(deletingKeyId)}>
+                <LoadingContent loading={deletingKeyId === keyDeleteTarget.key.id} icon={<Trash2 size={16} />} loadingLabel={tr(t, 'deleting', '删除中...')}>
+                  {t.delete}
+                </LoadingContent>
               </button>
             </div>
           </div>
@@ -5983,6 +6193,8 @@ function ChannelCard({
   isExpanded,
   onToggle,
   onEdit,
+  onChannelStatus,
+  isChannelStatusUpdating,
   onAddKey,
   onDelete,
   onKeyStatus,
@@ -5991,6 +6203,8 @@ function ChannelCard({
   onAddModelRate,
   onEditModelRate,
   onDeleteModelRate,
+  updatingKeyStatusId,
+  deletingModelRateId,
   selectedAgentTab: selectedAgentTabProp
 }: {
   channel: UpstreamChannel;
@@ -5999,6 +6213,8 @@ function ChannelCard({
   isExpanded: boolean;
   onToggle: () => void;
   onEdit: () => void;
+  onChannelStatus: (status: UpstreamChannel['status']) => void;
+  isChannelStatusUpdating: boolean;
   onAddKey: () => void;
   onDelete: () => void;
   onKeyStatus: (key: UpstreamChannelKey, status: UpstreamChannelKey['status']) => void;
@@ -6007,6 +6223,8 @@ function ChannelCard({
   onAddModelRate: () => void;
   onEditModelRate: (rate: UpstreamModelRate) => void;
   onDeleteModelRate: (rate: UpstreamModelRate) => void;
+  updatingKeyStatusId: string;
+  deletingModelRateId: string;
 }) {
   const [selectedAgentTab, setSelectedAgentTab] = React.useState<UpstreamChannelAgentTab>(selectedAgentTabProp || 'claude-code');
   const [isRatesExpanded, setIsRatesExpanded] = React.useState(true);
@@ -6028,7 +6246,7 @@ function ChannelCard({
             <span className="status-pill">{tr(t, 'channelNumber', '渠道编号')} #{channel.channelNumber}</span>
             <span className="status-pill">{tr(t, 'channelPriorityShort', '优先级')} {channel.sortOrder}</span>
             <span className={channel.status === 'active' ? 'status-code ok' : 'status-code error'}>
-              {channel.status === 'active' ? tr(t, 'active', '启用') : t.pause}
+              {channel.status === 'active' ? tr(t, 'active', '启用') : channel.status === 'banned' ? tr(t, 'banned', '封禁') : t.pause}
             </span>
             {channel.degradedUntil ? (
               <span className="status-pill warn">
@@ -6043,6 +6261,19 @@ function ChannelCard({
           </p>
         </div>
         <div className="row-actions">
+          {channel.status === 'banned' ? (
+            <button type="button" className="secondary-button" onClick={() => onChannelStatus('active')} disabled={isChannelStatusUpdating}>
+              <LoadingContent loading={isChannelStatusUpdating} icon={<ShieldCheck size={16} />} loadingLabel={tr(t, 'unbanning', '解封中...')}>
+                {tr(t, 'unban', '解封')}
+              </LoadingContent>
+            </button>
+          ) : (
+            <button type="button" className="secondary-button" onClick={() => onChannelStatus('banned')} disabled={isChannelStatusUpdating}>
+              <LoadingContent loading={isChannelStatusUpdating} icon={<Ban size={16} />} loadingLabel={tr(t, 'banning', '封禁中...')}>
+                {tr(t, 'ban', '封禁')}
+              </LoadingContent>
+            </button>
+          )}
           <button type="button" className="secondary-button" onClick={onEdit}>
             {tr(t, 'edit', '编辑')}
           </button>
@@ -6091,7 +6322,14 @@ function ChannelCard({
             {isRatesExpanded ? (
               <div className="model-rate-section">
                 <div className="model-rate-groups">
-                  <ModelRateGroup title={selectedAgentTab === 'claude-code' ? 'Claude Code' : 'Codex'} rates={visibleRates} t={t} onEdit={onEditModelRate} onDelete={onDeleteModelRate} />
+                  <ModelRateGroup
+                    title={selectedAgentTab === 'claude-code' ? 'Claude Code' : 'Codex'}
+                    rates={visibleRates}
+                    t={t}
+                    onEdit={onEditModelRate}
+                    onDelete={onDeleteModelRate}
+                    deletingModelRateId={deletingModelRateId}
+                  />
                 </div>
               </div>
             ) : null}
@@ -6109,44 +6347,49 @@ function ChannelCard({
             </div>
             {isKeysExpanded ? (
               visibleKeys.length ? (
-          <div className="upstream-key-list">
-            {visibleKeys.map((key) => {
-              return (
-                <div className="upstream-key-row" key={key.id}>
-                  <div>
-                    {key.name ? <span className="upstream-key-name">{key.name}</span> : null}
-                    <strong>{key.keyPreview}</strong>
-                    <span>{agentTypeLabel(key.agentType)}</span>
-                  </div>
-                  <span className={upstreamKeyStatusClassName(key)}>{upstreamKeyStatusLabel(key, t)}</span>
-                  <div className="upstream-key-meta">
-                    <span>
-                      {tr(t, 'keyExpiresAt', '到期时间')}: {key.expiresAt ? displayDateTime(key.expiresAt) : tr(t, 'permanentKey', '永久有效')}
-                    </span>
-                    <span>{tr(t, 'autoResetAt', '自动重置时间')}: {upstreamKeyAutoResetDisplay(key, t)}</span>
-                    <span>{key.failureReason || (key.lastUsedAt ? fullDate(key.lastUsedAt) : t.never)}</span>
-                  </div>
-                  <div className="row-actions">
-                    <button type="button" className="secondary-button" onClick={() => onEditKey(key)}>
-                      {tr(t, 'edit', '编辑')}
-                    </button>
-                    {key.status === 'banned' ? (
-                      <button type="button" className="secondary-button" onClick={() => onKeyStatus(key, 'active')}>
-                        {tr(t, 'unban', '解封')}
-                      </button>
-                    ) : (
-                      <button type="button" className="secondary-button" onClick={() => onKeyStatus(key, 'banned')}>
-                        {tr(t, 'ban', '封禁')}
-                      </button>
-                    )}
-                    <button type="button" className="icon-button danger" onClick={() => onDeleteKey(key)} title={t.delete}>
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
+                <div className="upstream-key-list">
+                  {visibleKeys.map((key) => {
+                    const isUpdatingStatus = updatingKeyStatusId === key.id;
+                    return (
+                      <div className="upstream-key-row" key={key.id}>
+                        <div>
+                          {key.name ? <span className="upstream-key-name">{key.name}</span> : null}
+                          <strong>{key.keyPreview}</strong>
+                          <span>{agentTypeLabel(key.agentType)}</span>
+                        </div>
+                        <span className={upstreamKeyStatusClassName(key)}>{upstreamKeyStatusLabel(key, t)}</span>
+                        <div className="upstream-key-meta">
+                          <span>
+                            {tr(t, 'keyExpiresAt', '到期时间')}: {key.expiresAt ? displayDateTime(key.expiresAt) : tr(t, 'permanentKey', '永久有效')}
+                          </span>
+                          <span>{tr(t, 'autoResetAt', '自动重置时间')}: {upstreamKeyAutoResetDisplay(key, t)}</span>
+                          <span>{key.failureReason || (key.lastUsedAt ? fullDate(key.lastUsedAt) : t.never)}</span>
+                        </div>
+                        <div className="row-actions">
+                          <button type="button" className="secondary-button" onClick={() => onEditKey(key)}>
+                            {tr(t, 'edit', '编辑')}
+                          </button>
+                          {key.status === 'banned' ? (
+                            <button type="button" className="secondary-button" onClick={() => onKeyStatus(key, 'active')} disabled={Boolean(updatingKeyStatusId)}>
+                              <LoadingContent loading={isUpdatingStatus} loadingLabel={tr(t, 'updating', '更新中...')}>
+                                {tr(t, 'unban', '解封')}
+                              </LoadingContent>
+                            </button>
+                          ) : (
+                            <button type="button" className="secondary-button" onClick={() => onKeyStatus(key, 'banned')} disabled={Boolean(updatingKeyStatusId)}>
+                              <LoadingContent loading={isUpdatingStatus} loadingLabel={tr(t, 'updating', '更新中...')}>
+                                {tr(t, 'ban', '封禁')}
+                              </LoadingContent>
+                            </button>
+                          )}
+                          <button type="button" className="icon-button danger" onClick={() => onDeleteKey(key)} title={t.delete}>
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
-          </div>
               ) : (
                 <Empty t={t} />
               )
@@ -6170,13 +6413,15 @@ function ModelRateGroup({
   rates,
   t,
   onEdit,
-  onDelete
+  onDelete,
+  deletingModelRateId
 }: {
   title: string;
   rates: UpstreamModelRate[];
   t: Record<string, string>;
   onEdit: (rate: UpstreamModelRate) => void;
   onDelete: (rate: UpstreamModelRate) => void;
+  deletingModelRateId: string;
 }) {
   return (
     <div className="model-rate-group">
@@ -6197,8 +6442,8 @@ function ModelRateGroup({
                 <button type="button" className="secondary-button" onClick={() => onEdit(rate)}>
                   {tr(t, 'edit', '编辑')}
                 </button>
-                <button type="button" className="icon-button danger" onClick={() => onDelete(rate)} title={t.delete}>
-                  <Trash2 size={16} />
+                <button type="button" className="icon-button danger" onClick={() => onDelete(rate)} title={t.delete} disabled={Boolean(deletingModelRateId)}>
+                  {deletingModelRateId === rate.id ? <ButtonSpinner size={16} /> : <Trash2 size={16} />}
                 </button>
               </div>
             </div>
@@ -6243,6 +6488,7 @@ function PlansPanel({
     event.preventDefault();
     const code = redeemCode.trim();
     if (!code) return;
+    if (isRedeeming) return;
     setIsRedeeming(true);
     try {
       const response = await fetch('/api/user/gift-cards/preview', {
@@ -6290,6 +6536,7 @@ function PlansPanel({
 
   async function confirmGiftCard() {
     if (!giftPreview) return;
+    if (isRedeeming) return;
     setIsRedeeming(true);
     try {
       const response = await fetch('/api/user/gift-cards/redeem', {
@@ -6395,7 +6642,9 @@ function PlansPanel({
               placeholder={t.redeemCardPlaceholder}
             />
             <button type="submit" disabled={!redeemCode.trim() || isRedeeming}>
-              {t.redeem}
+              <LoadingContent loading={isRedeeming} loadingLabel={tr(t, 'redeeming', '兑换中...')}>
+                {t.redeem}
+              </LoadingContent>
             </button>
           </div>
         </form>
@@ -6541,7 +6790,9 @@ function GiftCardConfirmModal({
             {t.cancel}
           </button>
           <button type="button" className="primary-button" onClick={onConfirm} disabled={disabled}>
-            {t.redeem}
+            <LoadingContent loading={disabled} loadingLabel={tr(t, 'redeeming', '兑换中...')}>
+              {t.redeem}
+            </LoadingContent>
           </button>
         </div>
       </section>
@@ -6563,6 +6814,7 @@ function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers:
   const [claimPage, setClaimPage] = React.useState<Paginated<{ orders: ClaimedOrder[] }>>({ orders: [], total: 0, page: 1, pageSize: 20 });
   const [redemptionPage, setRedemptionPage] = React.useState<GiftCardRedemptionPage>({ giftCards: [], total: 0, page: 1, pageSize: 20, days: 30 });
   const [loading, setLoading] = React.useState(false);
+  const [pendingTab, setPendingTab] = React.useState<'usage' | 'claims' | 'redemptions' | null>(null);
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const pageCount = Math.max(1, Math.ceil(logPage.total / logPage.pageSize));
 
@@ -6604,6 +6856,7 @@ function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers:
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
     } finally {
       setLoading(false);
+      setPendingTab(null);
     }
   }, [apiKeyId, claimsPage, giftCardCode, giftCardType, headers, claimPage.pageSize, logPage.pageSize, range, redemptionPage.pageSize, redemptionsPage, status, t.requestFailed, tab, usagePage]);
 
@@ -6638,6 +6891,12 @@ function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers:
     if (tab === 'redemptions') setRedemptionsPage(1);
   }
 
+  function changeLogTab(nextTab: 'usage' | 'claims' | 'redemptions') {
+    if (loading || tab === nextTab) return;
+    setPendingTab(nextTab);
+    setTab(nextTab);
+  }
+
   return (
     <section className="content-grid">
       <div className="log-type-tabs" role="tablist" aria-label="日志分页">
@@ -6646,60 +6905,69 @@ function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers:
           role="tab"
           aria-selected={tab === 'usage'}
           className={tab === 'usage' ? 'log-type-tab active' : 'log-type-tab'}
-          onClick={() => setTab('usage')}
+          onClick={() => changeLogTab('usage')}
+          disabled={loading}
         >
-          消费日志
+          <LoadingContent loading={pendingTab === 'usage'} loadingLabel="消费日志">
+            消费日志
+          </LoadingContent>
         </button>
         <button
           type="button"
           role="tab"
           aria-selected={tab === 'claims'}
           className={tab === 'claims' ? 'log-type-tab active' : 'log-type-tab'}
-          onClick={() => setTab('claims')}
+          onClick={() => changeLogTab('claims')}
+          disabled={loading}
         >
-          礼品码记录
+          <LoadingContent loading={pendingTab === 'claims'} loadingLabel="礼品码记录">
+            礼品码记录
+          </LoadingContent>
         </button>
         <button
           type="button"
           role="tab"
           aria-selected={tab === 'redemptions'}
           className={tab === 'redemptions' ? 'log-type-tab active' : 'log-type-tab'}
-          onClick={() => setTab('redemptions')}
+          onClick={() => changeLogTab('redemptions')}
+          disabled={loading}
         >
-          兑换记录
+          <LoadingContent loading={pendingTab === 'redemptions'} loadingLabel="兑换记录">
+            兑换记录
+          </LoadingContent>
         </button>
       </div>
       <div className="log-filters">
         {tab === 'usage' ? (
           <>
-        <label>
-          {t.logKey}
-          <select value={apiKeyId} onChange={(event) => updateApiKey(event.target.value)}>
-            <option value="all">{t.allKeys}</option>
-            {keys.map((apiKey) => (
-              <option value={apiKey.id} key={apiKey.id}>
-                {apiKey.name || apiKey.keyPreview || apiKey.id}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          {t.status}
-          <select value={status} onChange={(event) => updateStatus(event.target.value as LogStatus)}>
-            <option value="all">{t.allStatuses}</option>
-            <option value="success">{t.successOnly}</option>
-            <option value="failed">{t.failedOnly}</option>
-          </select>
-        </label>
-        <label>
-          {t.timeRange}
-          <select value={range} onChange={(event) => updateRange(event.target.value as LogRange)}>
-            <option value="24h">{t.last24Hours}</option>
-            <option value="3d">{t.last3Days}</option>
-            <option value="7d">{t.last7Days}</option>
-            <option value="30d">{t.last30Days}</option>
-          </select>
-        </label>
+            <label>
+              {t.logKey}
+              <select value={apiKeyId} onChange={(event) => updateApiKey(event.target.value)}>
+                <option value="all">{t.allKeys}</option>
+                {keys.map((apiKey) => (
+                  <option value={apiKey.id} key={apiKey.id}>
+                    {apiKey.name || apiKey.keyPreview || apiKey.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {t.status}
+              <select value={status} onChange={(event) => updateStatus(event.target.value as LogStatus)}>
+                <option value="all">{t.allStatuses}</option>
+                <option value="success">{t.successOnly}</option>
+                <option value="failed">{t.failedOnly}</option>
+              </select>
+            </label>
+            <label>
+              {t.timeRange}
+              <select value={range} onChange={(event) => updateRange(event.target.value as LogRange)}>
+                <option value="24h">{t.last24Hours}</option>
+                <option value="3d">{t.last3Days}</option>
+                <option value="7d">{t.last7Days}</option>
+                <option value="30d">{t.last30Days}</option>
+              </select>
+            </label>
           </>
         ) : null}
         {tab === 'claims' || tab === 'redemptions' ? (
@@ -6724,9 +6992,9 @@ function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers:
         {tab === 'usage' ? <LogRows logs={logPage.logs} t={t} expandedId={expandedId} setExpandedId={setExpandedId} /> : null}
         {tab === 'claims' ? <OrdersTable orders={claimPage.orders} /> : null}
         {tab === 'redemptions' ? <GiftRedemptionTable giftCards={redemptionPage.giftCards} /> : null}
-        {tab === 'usage' ? <PaginationBar page={usagePage} pageSize={logPage.pageSize} total={logPage.total} onPageChange={setUsagePage} /> : null}
-        {tab === 'claims' ? <PaginationBar page={claimsPage} pageSize={claimPage.pageSize} total={claimPage.total} onPageChange={setClaimsPage} /> : null}
-        {tab === 'redemptions' ? <PaginationBar page={redemptionsPage} pageSize={redemptionPage.pageSize} total={redemptionPage.total} onPageChange={setRedemptionsPage} /> : null}
+        {tab === 'usage' ? <PaginationBar page={usagePage} pageSize={logPage.pageSize} total={logPage.total} onPageChange={setUsagePage} loading={loading} /> : null}
+        {tab === 'claims' ? <PaginationBar page={claimsPage} pageSize={claimPage.pageSize} total={claimPage.total} onPageChange={setClaimsPage} loading={loading} /> : null}
+        {tab === 'redemptions' ? <PaginationBar page={redemptionsPage} pageSize={redemptionPage.pageSize} total={redemptionPage.total} onPageChange={setRedemptionsPage} loading={loading} /> : null}
       </section>
     </section>
   );
@@ -6780,18 +7048,46 @@ function GiftRedemptionTable({ giftCards }: { giftCards: GiftCardCard[] }) {
   );
 }
 
-function PaginationBar({ page, pageSize, total, onPageChange }: { page: number; pageSize: number; total: number; onPageChange: (page: number) => void }) {
+function PaginationBar({
+  page,
+  pageSize,
+  total,
+  onPageChange,
+  loading = false
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  onPageChange: (page: number) => void;
+  loading?: boolean;
+}) {
+  const [pendingDirection, setPendingDirection] = React.useState<'prev' | 'next' | null>(null);
+  const wasLoadingRef = React.useRef(false);
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
+
+  React.useEffect(() => {
+    if (wasLoadingRef.current && !loading) {
+      setPendingDirection(null);
+    }
+    wasLoadingRef.current = loading;
+  }, [loading]);
+
+  function changePage(nextPage: number, direction: 'prev' | 'next') {
+    if (loading) return;
+    setPendingDirection(direction);
+    onPageChange(nextPage);
+  }
+
   return (
     <div className="pagination-bar">
       <span>共 {total} 条</span>
       <div>
-        <button type="button" className="icon-button compact" onClick={() => onPageChange(page - 1)} disabled={page <= 1}>
-          <ChevronLeft size={16} />
+        <button type="button" className="icon-button compact" onClick={() => changePage(page - 1, 'prev')} disabled={loading || page <= 1}>
+          {pendingDirection === 'prev' ? <ButtonSpinner size={16} /> : <ChevronLeft size={16} />}
         </button>
         <strong>{page} / {pageCount}</strong>
-        <button type="button" className="icon-button compact" onClick={() => onPageChange(page + 1)} disabled={page >= pageCount}>
-          <ChevronRight size={16} />
+        <button type="button" className="icon-button compact" onClick={() => changePage(page + 1, 'next')} disabled={loading || page >= pageCount}>
+          {pendingDirection === 'next' ? <ButtonSpinner size={16} /> : <ChevronRight size={16} />}
         </button>
       </div>
     </div>
@@ -6805,28 +7101,53 @@ function UsersCenterPanel({ headers, refreshTick, t, onOpenUser }: { headers: He
   const [sortOrder, setSortOrder] = React.useState<'asc' | 'desc'>('desc');
   const [page, setPage] = React.useState(1);
   const [pageData, setPageData] = React.useState<UserListPage>({ users: [], total: 0, page: 1, pageSize: 20, sortField: 'createdAt', sortOrder: 'desc' });
+  const [loading, setLoading] = React.useState(false);
+  const [isSearching, setIsSearching] = React.useState(false);
+  const [sortLoadingField, setSortLoadingField] = React.useState<'freeCreditCents' | 'createdAt' | null>(null);
 
   const loadUsers = React.useCallback(async () => {
-    const params = new URLSearchParams({ page: String(page), pageSize: String(pageData.pageSize), sortField, sortOrder });
-    if (query.trim()) params.set('search', query.trim());
-    const response = await fetch(`/api/admin/users?${params.toString()}`, { headers });
-    const payload = await readJsonResponse(response);
-    if (!response.ok) {
-      showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
-      return;
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ page: String(page), pageSize: String(pageData.pageSize), sortField, sortOrder });
+      if (query.trim()) params.set('search', query.trim());
+      const response = await fetch(`/api/admin/users?${params.toString()}`, { headers });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      setPageData(payload as UserListPage);
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setLoading(false);
+      setIsSearching(false);
+      setSortLoadingField(null);
     }
-    setPageData(payload as UserListPage);
   }, [headers, page, pageData.pageSize, query, sortField, sortOrder, t.requestFailed]);
 
   React.useEffect(() => { void loadUsers(); }, [loadUsers, refreshTick]);
 
   function toggleSort(field: 'freeCreditCents' | 'createdAt') {
+    if (loading) return;
+    setSortLoadingField(field);
     if (sortField === field) {
       setSortOrder((value) => (value === 'desc' ? 'asc' : 'desc'));
     } else {
       setSortField(field);
       setSortOrder('desc');
     }
+    setPage(1);
+  }
+
+  function submitSearch() {
+    if (loading) return;
+    setIsSearching(true);
+    if (search === query && page === 1) {
+      void loadUsers();
+      return;
+    }
+    setQuery(search);
     setPage(1);
   }
 
@@ -6838,9 +7159,12 @@ function UsersCenterPanel({ headers, refreshTick, t, onOpenUser }: { headers: He
         className={active ? 'users-sort-button active' : 'users-sort-button'}
         onClick={() => toggleSort(field)}
         title={`${label}${active ? (sortOrder === 'desc' ? '（当前降序）' : '（当前升序）') : ''}`}
+        disabled={loading}
       >
         <span>{label}</span>
-        {active ? (
+        {sortLoadingField === field ? (
+          <ButtonSpinner size={14} />
+        ) : active ? (
           sortOrder === 'desc' ? <ChevronDown size={14} /> : <ChevronUpIcon />
         ) : (
           <ChevronsUpDown size={14} />
@@ -6857,8 +7181,13 @@ function UsersCenterPanel({ headers, refreshTick, t, onOpenUser }: { headers: He
             搜索
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ID / 用户名 / 邮箱" />
           </label>
-          <button type="button" className="secondary-button" onClick={() => { setQuery(search); setPage(1); }}>搜索</button>
+          <button type="button" className="secondary-button" onClick={submitSearch} disabled={loading}>
+            <LoadingContent loading={isSearching} loadingLabel={tr(t, 'searching', '搜索中...')}>
+              搜索
+            </LoadingContent>
+          </button>
         </div>
+        {loading ? <div className="loading-line" /> : null}
         <div className="users-table">
           <div className="users-table-head">
             <span>ID</span>
@@ -6889,7 +7218,7 @@ function UsersCenterPanel({ headers, refreshTick, t, onOpenUser }: { headers: He
             </article>
           ))}
         </div>
-        <PaginationBar page={pageData.page} pageSize={pageData.pageSize} total={pageData.total} onPageChange={setPage} />
+        <PaginationBar page={pageData.page} pageSize={pageData.pageSize} total={pageData.total} onPageChange={setPage} loading={loading} />
       </section>
     </section>
   );
@@ -6904,16 +7233,26 @@ function UserDetailPanel({ headers, userId, onBack, t }: { headers: HeadersInit;
   const [claims, setClaims] = React.useState<Paginated<{ orders: ClaimedOrder[] }>>({ orders: [], total: 0, page: 1, pageSize: 20 });
   const [redemptions, setRedemptions] = React.useState<GiftCardRedemptionPage>({ giftCards: [], total: 0, page: 1, pageSize: 20, days: 30 });
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
+  const [userLoading, setUserLoading] = React.useState(false);
+  const [detailLoading, setDetailLoading] = React.useState(false);
+  const [pendingDetailTab, setPendingDetailTab] = React.useState<'logs' | 'claims' | 'redemptions' | null>(null);
 
   React.useEffect(() => {
     void (async () => {
-      const response = await fetch(`/api/admin/users/${userId}`, { headers });
-      const payload = await readJsonResponse(response);
-      if (!response.ok) {
-        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
-        return;
+      setUserLoading(true);
+      try {
+        const response = await fetch(`/api/admin/users/${userId}`, { headers });
+        const payload = await readJsonResponse(response);
+        if (!response.ok) {
+          showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+          return;
+        }
+        setUser((payload as { user: UserListItem }).user);
+      } catch (error) {
+        showErrorToast(unknownErrorMessage(error, t.requestFailed));
+      } finally {
+        setUserLoading(false);
       }
-      setUser((payload as { user: UserListItem }).user);
     })();
   }, [headers, userId, t.requestFailed]);
 
@@ -6925,22 +7264,40 @@ function UserDetailPanel({ headers, userId, onBack, t }: { headers: HeadersInit;
 
   React.useEffect(() => {
     void (async () => {
-      const endpoint = tab === 'logs'
-        ? `/api/admin/users/${userId}/logs?page=${logs.page}&pageSize=${logs.pageSize}&range=30d`
-        : tab === 'claims'
-          ? `/api/admin/users/${userId}/order-claims?page=${claims.page}&pageSize=${claims.pageSize}&days=30&giftCardType=${giftCardType}${giftCardCode.trim() ? `&giftCardCode=${encodeURIComponent(giftCardCode.trim())}` : ''}`
-          : `/api/admin/users/${userId}/gift-card-redemptions?page=${redemptions.page}&pageSize=${redemptions.pageSize}&days=30&type=${giftCardType}${giftCardCode.trim() ? `&code=${encodeURIComponent(giftCardCode.trim())}` : ''}`;
-      const response = await fetch(endpoint, { headers });
-      const payload = await readJsonResponse(response);
-      if (!response.ok) {
-        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
-        return;
+      setDetailLoading(true);
+      try {
+        const endpoint = tab === 'logs'
+          ? `/api/admin/users/${userId}/logs?page=${logs.page}&pageSize=${logs.pageSize}&range=30d`
+          : tab === 'claims'
+            ? `/api/admin/users/${userId}/order-claims?page=${claims.page}&pageSize=${claims.pageSize}&days=30&giftCardType=${giftCardType}${giftCardCode.trim() ? `&giftCardCode=${encodeURIComponent(giftCardCode.trim())}` : ''}`
+            : `/api/admin/users/${userId}/gift-card-redemptions?page=${redemptions.page}&pageSize=${redemptions.pageSize}&days=30&type=${giftCardType}${giftCardCode.trim() ? `&code=${encodeURIComponent(giftCardCode.trim())}` : ''}`;
+        const response = await fetch(endpoint, { headers });
+        const payload = await readJsonResponse(response);
+        if (!response.ok) {
+          showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+          return;
+        }
+        if (tab === 'logs') setLogs(payload as LogPage);
+        if (tab === 'claims') setClaims(payload as Paginated<{ orders: ClaimedOrder[] }>);
+        if (tab === 'redemptions') setRedemptions(payload as GiftCardRedemptionPage);
+        setExpandedId(null);
+      } catch (error) {
+        showErrorToast(unknownErrorMessage(error, t.requestFailed));
+      } finally {
+        setDetailLoading(false);
+        setPendingDetailTab(null);
       }
-      if (tab === 'logs') setLogs(payload as LogPage);
-      if (tab === 'claims') setClaims(payload as Paginated<{ orders: ClaimedOrder[] }>);
-      if (tab === 'redemptions') setRedemptions(payload as GiftCardRedemptionPage);
     })();
   }, [claims.page, claims.pageSize, giftCardCode, giftCardType, headers, logs.page, logs.pageSize, redemptions.page, redemptions.pageSize, tab, t.requestFailed, userId]);
+
+  function changeUserDetailTab(nextTab: 'logs' | 'claims' | 'redemptions') {
+    if (detailLoading || tab === nextTab) return;
+    setPendingDetailTab(nextTab);
+    setTab(nextTab);
+    if (nextTab === 'logs') setLogs((value) => ({ ...value, page: 1 }));
+    if (nextTab === 'claims') setClaims((value) => ({ ...value, page: 1 }));
+    if (nextTab === 'redemptions') setRedemptions((value) => ({ ...value, page: 1 }));
+  }
 
   return (
     <section className="content-grid">
@@ -6952,9 +7309,21 @@ function UserDetailPanel({ headers, userId, onBack, t }: { headers: HeadersInit;
           </div>
         </div>
         <div className="log-type-tabs" role="tablist" aria-label="用户详情分页">
-          <button type="button" role="tab" aria-selected={tab === 'logs'} className={tab === 'logs' ? 'log-type-tab active' : 'log-type-tab'} onClick={() => { setTab('logs'); setLogs((value) => ({ ...value, page: 1 })); }}>30天使用日志</button>
-          <button type="button" role="tab" aria-selected={tab === 'claims'} className={tab === 'claims' ? 'log-type-tab active' : 'log-type-tab'} onClick={() => { setTab('claims'); setClaims((value) => ({ ...value, page: 1 })); }}>礼品码领取记录</button>
-          <button type="button" role="tab" aria-selected={tab === 'redemptions'} className={tab === 'redemptions' ? 'log-type-tab active' : 'log-type-tab'} onClick={() => { setTab('redemptions'); setRedemptions((value) => ({ ...value, page: 1 })); }}>礼品码兑换记录</button>
+          <button type="button" role="tab" aria-selected={tab === 'logs'} className={tab === 'logs' ? 'log-type-tab active' : 'log-type-tab'} onClick={() => changeUserDetailTab('logs')} disabled={detailLoading}>
+            <LoadingContent loading={pendingDetailTab === 'logs'} loadingLabel="30天使用日志">
+              30天使用日志
+            </LoadingContent>
+          </button>
+          <button type="button" role="tab" aria-selected={tab === 'claims'} className={tab === 'claims' ? 'log-type-tab active' : 'log-type-tab'} onClick={() => changeUserDetailTab('claims')} disabled={detailLoading}>
+            <LoadingContent loading={pendingDetailTab === 'claims'} loadingLabel="礼品码领取记录">
+              礼品码领取记录
+            </LoadingContent>
+          </button>
+          <button type="button" role="tab" aria-selected={tab === 'redemptions'} className={tab === 'redemptions' ? 'log-type-tab active' : 'log-type-tab'} onClick={() => changeUserDetailTab('redemptions')} disabled={detailLoading}>
+            <LoadingContent loading={pendingDetailTab === 'redemptions'} loadingLabel="礼品码兑换记录">
+              礼品码兑换记录
+            </LoadingContent>
+          </button>
         </div>
         {tab === 'claims' || tab === 'redemptions' ? (
           <div className="log-filters">
@@ -6980,12 +7349,13 @@ function UserDetailPanel({ headers, userId, onBack, t }: { headers: HeadersInit;
             </label>
           </div>
         ) : null}
-        {tab === 'logs' ? <LogRows logs={logs.logs} t={t} expandedId={expandedId} setExpandedId={setExpandedId} /> : null}
-        {tab === 'claims' ? <OrdersTable orders={claims.orders} /> : null}
-        {tab === 'redemptions' ? <GiftRedemptionTable giftCards={redemptions.giftCards} /> : null}
-        {tab === 'logs' ? <PaginationBar page={logs.page} pageSize={logs.pageSize} total={logs.total} onPageChange={(next) => setLogs((value) => ({ ...value, page: next }))} /> : null}
-        {tab === 'claims' ? <PaginationBar page={claims.page} pageSize={claims.pageSize} total={claims.total} onPageChange={(next) => setClaims((value) => ({ ...value, page: next }))} /> : null}
-        {tab === 'redemptions' ? <PaginationBar page={redemptions.page} pageSize={redemptions.pageSize} total={redemptions.total} onPageChange={(next) => setRedemptions((value) => ({ ...value, page: next }))} /> : null}
+          {userLoading || detailLoading ? <div className="loading-line" /> : null}
+          {tab === 'logs' ? <LogRows logs={logs.logs} t={t} expandedId={expandedId} setExpandedId={setExpandedId} /> : null}
+          {tab === 'claims' ? <OrdersTable orders={claims.orders} /> : null}
+          {tab === 'redemptions' ? <GiftRedemptionTable giftCards={redemptions.giftCards} /> : null}
+          {tab === 'logs' ? <PaginationBar page={logs.page} pageSize={logs.pageSize} total={logs.total} onPageChange={(next) => setLogs((value) => ({ ...value, page: next }))} loading={detailLoading} /> : null}
+          {tab === 'claims' ? <PaginationBar page={claims.page} pageSize={claims.pageSize} total={claims.total} onPageChange={(next) => setClaims((value) => ({ ...value, page: next }))} loading={detailLoading} /> : null}
+          {tab === 'redemptions' ? <PaginationBar page={redemptions.page} pageSize={redemptions.pageSize} total={redemptions.total} onPageChange={(next) => setRedemptions((value) => ({ ...value, page: next }))} loading={detailLoading} /> : null}
       </section>
     </section>
   );
@@ -7271,8 +7641,9 @@ function AnnouncementsPanel({ headers, refreshTick, onSaved }: { headers: Header
               恢复
             </button>
             <button type="submit" form="announcement-publish-form" className="primary-button" disabled={saving || !content.trim()}>
-              <Save size={16} />
-              {saving ? '发布中…' : '发布公告'}
+              <LoadingContent loading={saving} icon={<Save size={16} />} loadingLabel="发布中...">
+                发布公告
+              </LoadingContent>
             </button>
           </div>
         </div>
@@ -7368,7 +7739,21 @@ function AnnouncementsPanel({ headers, refreshTick, onSaved }: { headers: Header
   );
 }
 
-function AnnouncementModal({ announcement, busy, onClose, onCloseToday }: { announcement: Announcement; busy: boolean; onClose: () => void; onCloseToday: () => void }) {
+function AnnouncementModal({
+  announcement,
+  busyAction,
+  onClose,
+  onCloseToday
+}: {
+  announcement: Announcement;
+  busyAction: 'close' | 'closeToday' | null;
+  onClose: () => void;
+  onCloseToday: () => void;
+}) {
+  const isClosingToday = busyAction === 'closeToday';
+  const isClosing = busyAction === 'close';
+  const isBusy = busyAction !== null;
+
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="modal-panel announcement-modal" role="dialog" aria-modal="true" aria-labelledby="announcement-modal-title">
@@ -7380,8 +7765,16 @@ function AnnouncementModal({ announcement, busy, onClose, onCloseToday }: { anno
         </div>
         <div className="announcement-modal-content">{announcement.content}</div>
         <div className="modal-actions announcement-modal-actions">
-          <button type="button" className="secondary-button" onClick={onCloseToday} disabled={busy}>今日关闭</button>
-          <button type="button" className="primary-button" onClick={onClose} disabled={busy}>关闭</button>
+          <button type="button" className="secondary-button" onClick={onCloseToday} disabled={isBusy}>
+            <LoadingContent loading={isClosingToday} loadingLabel="关闭中...">
+              今日关闭
+            </LoadingContent>
+          </button>
+          <button type="button" className="primary-button" onClick={onClose} disabled={isBusy}>
+            <LoadingContent loading={isClosing} loadingLabel="关闭中...">
+              关闭
+            </LoadingContent>
+          </button>
         </div>
       </section>
     </div>
