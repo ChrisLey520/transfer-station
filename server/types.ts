@@ -15,6 +15,14 @@ export type User = {
   updatedAt: string;
 };
 
+export type Announcement = {
+  id: string;
+  content: string;
+  publishedAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type Plan = {
   id: string;
   name: string;

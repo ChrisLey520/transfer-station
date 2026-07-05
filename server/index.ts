@@ -17,7 +17,9 @@ import {
   deleteUpstreamChannel,
   deleteUpstreamChannelKey,
   deleteUpstreamModelRate,
+  dismissAnnouncementForUser,
   getAccountState,
+  getAnnouncementForUser,
   getFirstAdminUser,
   getPlan,
   getUserDetail,
@@ -58,6 +60,7 @@ import {
   resetUpstreamKeyFailureState,
   updateUpstreamChannelKey,
   updateProductLinks,
+  saveAnnouncement,
   markTaobaoShopMessagePermitted,
   upsertTaobaoProductMapping,
   upsertUpstreamChannel,
@@ -1371,7 +1374,7 @@ app.post('/api/auth/login', slidingWindowGuard('auth-login', 40, 10 * 60_000), (
 app.get('/api/auth/me', (req, res) => {
   const user = authUser(req, res);
   if (!user) return;
-  res.json({ user });
+  res.json({ user, announcement: getAnnouncementForUser(user.id) });
 });
 
 app.get('/api/bootstrap', (req, res) => {
@@ -1383,8 +1386,47 @@ app.get('/api/bootstrap', (req, res) => {
     summary: usageSummaryForUser(user.id),
     plans: listPlans(),
     productLinks: listProductLinks(),
-    keys: listKeys(user.id)
+    keys: listKeys(user.id),
+    announcement: getAnnouncementForUser(user.id)
   });
+});
+
+app.post('/api/announcement/dismiss', (req, res) => {
+  const user = authUser(req, res);
+  if (!user) return;
+
+  const parsed = z.object({ action: z.enum(['close', 'closeToday']) }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const announcement = dismissAnnouncementForUser(user.id, parsed.data.action);
+    res.json({ announcement });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : '关闭公告失败。' });
+  }
+});
+
+app.get('/api/admin/announcement', adminGuard, (_req, res) => {
+  const adminUser = res.locals.adminUser as User;
+  res.json({ announcement: getAnnouncementForUser(adminUser.id) });
+});
+
+app.put('/api/admin/announcement', adminGuard, (req, res) => {
+  const parsed = z.object({ content: z.string().trim().min(1).max(20000) }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const announcement = saveAnnouncement(parsed.data.content);
+    res.json({ announcement });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : '保存公告失败。' });
+  }
 });
 
 app.get('/api/plans', adminGuard, (_req, res) => {

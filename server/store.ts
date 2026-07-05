@@ -17,6 +17,7 @@ import {
 import { createApiKey, decryptKey, encryptKey, hashKey, previewKey } from './crypto.js';
 import { usageCostCents, type UsageRates } from './pricing.js';
 import type {
+  Announcement,
   AgentType,
   ApiKeyRecord,
   GiftCard,
@@ -105,6 +106,14 @@ type UserSession = {
   user: User;
   token: string;
   expiresAt: string;
+};
+
+type AnnouncementDismissAction = 'close' | 'closeToday';
+
+type AnnouncementWithVisibility = Announcement & {
+  shouldShow: boolean;
+  dismissedForToday: boolean;
+  dismissedPermanently: boolean;
 };
 
 type UpstreamChannelInput = {
@@ -763,6 +772,155 @@ function tokenDigest(token: string) {
 
 function toPublicUser(row: any): User {
   return mapUser(row);
+}
+
+function normalizeAnnouncement(row: any): Announcement {
+  return {
+    id: row.id,
+    content: row.content,
+    publishedAt: row.published_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function todayDateString() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getLatestAnnouncement(): Announcement | null {
+  const row = db.prepare('SELECT * FROM announcements ORDER BY updated_at DESC LIMIT 1').get() as any;
+  return row ? normalizeAnnouncement(row) : null;
+}
+
+function getUserAnnouncementState(userId: string, announcementId: string) {
+  const row = db
+    .prepare('SELECT * FROM user_announcement_states WHERE user_id = ? AND announcement_id = ?')
+    .get(userId, announcementId) as
+    | {
+        closed_at: string | null;
+        closed_for_date: string | null;
+      }
+    | undefined;
+  return row || null;
+}
+
+function upsertUserAnnouncementState(input: {
+  userId: string;
+  announcementId: string;
+  closedAt?: string | null;
+  closedForDate?: string | null;
+}) {
+  const timestamp = nowIso();
+  db.prepare(
+    `
+    INSERT INTO user_announcement_states (
+      user_id,
+      announcement_id,
+      closed_at,
+      closed_for_date,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      @userId,
+      @announcementId,
+      @closedAt,
+      @closedForDate,
+      @createdAt,
+      @updatedAt
+    )
+    ON CONFLICT(user_id, announcement_id) DO UPDATE SET
+      closed_at = excluded.closed_at,
+      closed_for_date = excluded.closed_for_date,
+      updated_at = excluded.updated_at
+  `
+  ).run({
+    userId: input.userId,
+    announcementId: input.announcementId,
+    closedAt: input.closedAt ?? null,
+    closedForDate: input.closedForDate ?? null,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+}
+
+export function getAnnouncementForUser(userId: string): AnnouncementWithVisibility | null {
+  const announcement = getLatestAnnouncement();
+  if (!announcement) return null;
+
+  const state = getUserAnnouncementState(userId, announcement.id);
+  const dismissedPermanently = Boolean(state?.closed_at);
+  const dismissedForToday = state?.closed_for_date === todayDateString();
+
+  return {
+    ...announcement,
+    shouldShow: !dismissedPermanently && !dismissedForToday,
+    dismissedForToday,
+    dismissedPermanently
+  };
+}
+
+export function saveAnnouncement(content: string) {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    throw new Error('公告内容不能为空。');
+  }
+
+  const timestamp = nowIso();
+
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM user_announcement_states').run();
+    db.prepare('DELETE FROM announcements').run();
+    db.prepare(
+      `
+      INSERT INTO announcements (id, content, published_at, created_at, updated_at)
+      VALUES (@id, @content, @publishedAt, @createdAt, @updatedAt)
+    `
+    ).run({
+      id: makeId(),
+      content: trimmed,
+      publishedAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+  });
+
+  tx();
+  return getLatestAnnouncement()!;
+}
+
+export function dismissAnnouncementForUser(userId: string, action: AnnouncementDismissAction) {
+  const announcement = getLatestAnnouncement();
+  if (!announcement) {
+    throw new Error('当前没有可关闭的公告。');
+  }
+
+  if (action === 'closeToday') {
+    upsertUserAnnouncementState({
+      userId,
+      announcementId: announcement.id,
+      closedAt: null,
+      closedForDate: todayDateString()
+    });
+  } else {
+    upsertUserAnnouncementState({
+      userId,
+      announcementId: announcement.id,
+      closedAt: nowIso(),
+      closedForDate: null
+    });
+  }
+
+  return getAnnouncementForUser(userId);
+}
+
+export function clearAnnouncement() {
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM user_announcement_states').run();
+    db.prepare('DELETE FROM announcements').run();
+  });
+  tx();
 }
 
 function createUserRecord(input: { email: string; password: string; displayName?: string | null; role?: UserRole }) {
