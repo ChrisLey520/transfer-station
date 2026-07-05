@@ -547,6 +547,19 @@ function normalizeUsage(usage: AnthropicUsage | undefined, rates: UsageRates = {
   };
 }
 
+type NormalizedUsage = ReturnType<typeof normalizeUsage>;
+
+function withoutUsageCost(usage: NormalizedUsage): NormalizedUsage {
+  return {
+    ...usage,
+    inputCostCents: 0,
+    outputCostCents: 0,
+    cacheCreationCostCents: 0,
+    cacheReadCostCents: 0,
+    totalCostCents: 0
+  };
+}
+
 function requestOrigin(req: Request) {
   const configuredBaseUrl = (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || '').trim();
   if (configuredBaseUrl) return configuredBaseUrl.replace(/\/+$/, '');
@@ -709,6 +722,12 @@ function upstreamErrorMessage(payload: unknown, fallback: string) {
     return String((payload as any).message);
   }
   return fallback;
+}
+
+function hasUpstreamErrorPayload(payload: unknown) {
+  if (!payload || typeof payload !== 'object') return false;
+  const record = payload as Record<string, unknown>;
+  return Boolean(record.error) || record.type === 'error' || record.object === 'error';
 }
 
 function parseRetryValue(value: unknown): string | null {
@@ -1208,10 +1227,14 @@ function writeProxyLog(input: {
   usageSource?: 'plan' | 'balance' | 'none';
   rates?: UsageRates;
   usageMultiplier?: number;
+  billable?: boolean;
   errorMessage?: string | null;
   requestId: string;
 }) {
-  const usage = normalizeUsage(input.usage, input.rates, input.usageMultiplier);
+  const normalizedUsage = normalizeUsage(input.usage, input.rates, input.usageMultiplier);
+  const billable =
+    input.billable ?? (input.statusCode >= 200 && input.statusCode <= 299 && !input.errorMessage);
+  const usage = billable ? normalizedUsage : withoutUsageCost(normalizedUsage);
   createUsageLog({
     apiKeyId: input.key?.id ?? null,
     channelGroupId: input.channelGroupId ?? null,
@@ -2549,6 +2572,12 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType)
       const text = await upstream.text();
       const payload = parseJsonText(text);
       const errorMessage = upstreamErrorMessage(payload, upstream.statusText);
+      const responseErrorMessage = !upstream.ok
+        ? errorMessage
+        : hasUpstreamErrorPayload(payload)
+          ? upstreamErrorMessage(payload, 'Upstream response error')
+          : null;
+      const loggedStatusCode = responseErrorMessage && upstream.ok ? 502 : upstream.status;
 
       if (!upstream.ok && isKeyLevelFailure(upstream.status, errorMessage)) {
         markUpstreamKeyFailure({
@@ -2593,6 +2622,7 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType)
         resolveUpstreamRates({ groupId: selection.group.id, agent, model: loggedModel }),
         displayUsageMultiplier
       );
+      const logUsage = responseErrorMessage ? withoutUsageCost(tokenUsage) : tokenUsage;
       createUsageLog({
         apiKeyId: key.id,
         channelGroupId: selection.group.id,
@@ -2601,19 +2631,19 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType)
         model: loggedModel,
         path: req.path,
         method: req.method,
-        statusCode: upstream.status,
-        inputTokens: tokenUsage.inputTokens,
-        outputTokens: tokenUsage.outputTokens,
-        cacheCreationInputTokens: tokenUsage.cacheCreationInputTokens,
-        cacheReadInputTokens: tokenUsage.cacheReadInputTokens,
-        totalTokens: tokenUsage.totalTokens,
-        inputCostCents: tokenUsage.inputCostCents,
-        outputCostCents: tokenUsage.outputCostCents,
-        cacheCreationCostCents: tokenUsage.cacheCreationCostCents,
-        cacheReadCostCents: tokenUsage.cacheReadCostCents,
-        totalCostCents: tokenUsage.totalCostCents,
+        statusCode: loggedStatusCode,
+        inputTokens: logUsage.inputTokens,
+        outputTokens: logUsage.outputTokens,
+        cacheCreationInputTokens: logUsage.cacheCreationInputTokens,
+        cacheReadInputTokens: logUsage.cacheReadInputTokens,
+        totalTokens: logUsage.totalTokens,
+        inputCostCents: logUsage.inputCostCents,
+        outputCostCents: logUsage.outputCostCents,
+        cacheCreationCostCents: logUsage.cacheCreationCostCents,
+        cacheReadCostCents: logUsage.cacheReadCostCents,
+        totalCostCents: logUsage.totalCostCents,
         latencyMs: Date.now() - startedAt,
-        errorMessage: upstream.ok ? null : errorMessage,
+        errorMessage: responseErrorMessage,
         requestId
       });
       return;
@@ -2749,11 +2779,16 @@ async function streamSse(
   req.off('aborted', markClientClosed);
   res.off('close', markClientClosed);
   if (!clientClosed && !res.writableEnded && !res.destroyed) res.end();
+  const upstreamFailed = Boolean(errorMessage);
+  const loggedStatusCode =
+    upstreamFailed && logContext.statusCode >= 200 && logContext.statusCode <= 299 ? 502 : logContext.statusCode;
   writeProxyLog({
     ...logContext,
+    statusCode: loggedStatusCode,
     usage: finalUsage,
     usageSource: logContext.usageSource,
     usageMultiplier: logContext.displayUsageMultiplier,
+    billable: !upstreamFailed,
     errorMessage: errorMessage || (clientClosed ? 'Client disconnected; upstream drained for final usage' : null)
   });
 }

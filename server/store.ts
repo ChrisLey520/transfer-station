@@ -3807,7 +3807,6 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
     .get(apiKeyId) as { id: string; five_hour_token_limit: number; weekly_token_limit: number } | undefined;
 
   if (!key) {
-    const resetAt = new Date(nowIso()).toISOString();
     return {
       fiveHourUsed: 0,
       fiveHourLimit: 0,
@@ -3817,8 +3816,8 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
       remainingWeekly: 0,
       balanceCents,
       quotaSource: balanceCents > 0 ? 'balance' : 'none',
-      fiveHourResetAt: resetAt,
-      weeklyResetAt: resetAt
+      fiveHourResetAt: '',
+      weeklyResetAt: ''
     };
   }
 
@@ -3874,10 +3873,10 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
   const weeklyUsed = Number(weekly.used ?? 0);
   const fiveHourResetAt = oldestFiveHour.oldest
     ? new Date(new Date(oldestFiveHour.oldest).getTime() + fiveHoursMs).toISOString()
-    : new Date(now + fiveHoursMs).toISOString();
+    : '';
   const weeklyResetAt = oldestWeekly.oldest
     ? new Date(new Date(oldestWeekly.oldest).getTime() + sevenDaysMs).toISOString()
-    : new Date(now + sevenDaysMs).toISOString();
+    : '';
 
   const remainingFiveHour = Math.max(0, key.five_hour_token_limit - fiveHourUsed);
   const remainingWeekly = Math.max(0, key.weekly_token_limit - weeklyUsed);
@@ -3935,7 +3934,7 @@ export function assertQuota(key: KeyWithPlan) {
   return {
     ok: false as const,
     statusCode: 402,
-    message: `额度使用已达上限，恢复时间：${formatQuotaResetAt(resetAt)}`,
+    message: resetAt ? `额度使用已达上限，恢复时间：${formatQuotaResetAt(resetAt)}` : '额度使用已达上限，暂无可恢复时间。',
     quota
   };
 }
