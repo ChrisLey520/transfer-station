@@ -41,6 +41,96 @@ function parseRetryValue(value: unknown): string | null {
   return null;
 }
 
+const monthIndexes: Record<string, number> = {
+  jan: 0,
+  january: 0,
+  feb: 1,
+  february: 1,
+  mar: 2,
+  march: 2,
+  apr: 3,
+  april: 3,
+  may: 4,
+  jun: 5,
+  june: 5,
+  jul: 6,
+  july: 6,
+  aug: 7,
+  august: 7,
+  sep: 8,
+  sept: 8,
+  september: 8,
+  oct: 9,
+  october: 9,
+  nov: 10,
+  november: 10,
+  dec: 11,
+  december: 11
+};
+
+function yearInOffsetTimezone(now: number, offsetMinutes: number) {
+  return new Date(now + offsetMinutes * 60 * 1000).getUTCFullYear();
+}
+
+function parseUtcOffset(hoursText: string, minutesText?: string) {
+  const hours = Number(hoursText);
+  const minutes = minutesText ? Number(minutesText) : 0;
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  if (Math.abs(hours) > 14 || minutes < 0 || minutes >= 60) return null;
+  const sign = hours < 0 ? -1 : 1;
+  return sign * (Math.abs(hours) * 60 + minutes);
+}
+
+function parseTextResetValue(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (!text) return null;
+
+  const match = text.match(
+    /\b(?:will\s+)?(?:reset|resets|retry|available)\b[\s\S]*?\bon\s+([A-Za-z]{3,9})\s+(\d{1,2})(?:,?\s+(\d{4}))?\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?\s*\(\s*UTC\s*([+-]\d{1,2})(?::?(\d{2}))?\s*\)/i
+  );
+  if (!match) return null;
+
+  const month = monthIndexes[match[1].toLowerCase()];
+  const day = Number(match[2]);
+  const explicitYear = match[3] ? Number(match[3]) : null;
+  let hour = Number(match[4]);
+  const minute = match[5] ? Number(match[5]) : 0;
+  const meridiem = match[6]?.toUpperCase();
+  const offsetMinutes = parseUtcOffset(match[7], match[8]);
+  if (
+    month === undefined ||
+    !Number.isInteger(day) ||
+    day < 1 ||
+    day > 31 ||
+    !Number.isInteger(hour) ||
+    !Number.isInteger(minute) ||
+    minute < 0 ||
+    minute >= 60 ||
+    offsetMinutes === null
+  ) {
+    return null;
+  }
+
+  if (meridiem) {
+    if (hour < 1 || hour > 12) return null;
+    hour = (hour % 12) + (meridiem === 'PM' ? 12 : 0);
+  } else if (hour < 0 || hour > 23) {
+    return null;
+  }
+
+  const now = Date.now();
+  let year = explicitYear ?? yearInOffsetTimezone(now, offsetMinutes);
+  let timestamp = Date.UTC(year, month, day, hour, minute) - offsetMinutes * 60 * 1000;
+  if (!explicitYear && timestamp <= now) {
+    year += 1;
+    timestamp = Date.UTC(year, month, day, hour, minute) - offsetMinutes * 60 * 1000;
+  }
+
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 function nestedValue(source: unknown, pathValue: string) {
   return pathValue.split('.').reduce<unknown>((value, key) => {
     if (!value || typeof value !== 'object') return undefined;
@@ -85,6 +175,12 @@ export function recoveryUntilFromUpstream(headers: Headers, payload: unknown) {
       continue;
     }
     const parsed = parseRetryValue(value);
+    if (parsed) return parsed;
+  }
+
+  const textPaths = ['error', 'message', 'detail', 'error.message', 'error.detail'];
+  for (const pathValue of textPaths) {
+    const parsed = parseTextResetValue(nestedValue(payload, pathValue));
     if (parsed) return parsed;
   }
 

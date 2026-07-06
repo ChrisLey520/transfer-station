@@ -1,9 +1,16 @@
 import type { Request } from 'express';
+import dayjs from 'dayjs';
 import { assertQuota, getAccountState, hasAvailableUpstreamChannels, usageSummaryForUser } from '../store.js';
 import type { KeyWithPlan } from '../types.js';
 
 function centsToAmount(cents: number) {
   return Number(((cents || 0) / 100).toFixed(2));
+}
+
+function formatResetAt(value: string) {
+  if (!value) return value;
+  const date = dayjs(value);
+  return date.isValid() ? date.format('YYYY-MM-DD HH:mm:ss') : value;
 }
 
 export function upstreamConfigured() {
@@ -62,7 +69,7 @@ export function buildKeyUsageStatus(key: KeyWithPlan) {
     limitCents: quota.fiveHourLimit,
     remaining: centsToAmount(quota.remainingFiveHour),
     remainingCents: quota.remainingFiveHour,
-    resetAt: quota.fiveHourResetAt
+    resetAt: formatResetAt(quota.fiveHourResetAt)
   };
   const weekly = {
     used: centsToAmount(quota.weeklyUsed),
@@ -71,7 +78,7 @@ export function buildKeyUsageStatus(key: KeyWithPlan) {
     limitCents: quota.weeklyLimit,
     remaining: centsToAmount(quota.remainingWeekly),
     remainingCents: quota.remainingWeekly,
-    resetAt: quota.weeklyResetAt
+    resetAt: formatResetAt(quota.weeklyResetAt)
   };
 
   return {

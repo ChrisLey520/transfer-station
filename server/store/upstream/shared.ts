@@ -1,10 +1,12 @@
 import { customAlphabet } from 'nanoid';
+import dayjs from 'dayjs';
 import { db, mapUpstreamChannel, mapUpstreamChannelKey, mapUpstreamModelRate, nowIso } from '../../db.js';
 import type {
   AgentType,
   UpstreamChannelGroup,
   UpstreamChannelGroupListItem,
   UpstreamChannelKey,
+  UpstreamChannelKeyListItem,
   UpstreamKeyAgentType,
   UpstreamModelRate,
   UpstreamSelectionCandidate
@@ -210,7 +212,13 @@ export function clearExpiredUpstreamDegradations() {
   }
 }
 
-export function publicUpstreamKey(key: UpstreamChannelKey) {
+function displayDateTime(value: string | null) {
+  if (!value) return null;
+  const date = dayjs(value);
+  return date.isValid() ? date.format('YYYY-MM-DD HH:mm:ss') : value;
+}
+
+export function publicUpstreamKey(key: UpstreamChannelKey): UpstreamChannelKeyListItem {
   return {
     id: key.id,
     channelGroupId: key.channelGroupId,
@@ -220,7 +228,7 @@ export function publicUpstreamKey(key: UpstreamChannelKey) {
     status: key.status,
     sortOrder: key.sortOrder,
     expiresAt: key.expiresAt,
-    exhaustedUntil: key.exhaustedUntil,
+    exhaustedUntil: displayDateTime(key.exhaustedUntil),
     failureReason: key.failureReason,
     failureStatusCode: key.failureStatusCode,
     lastUsedAt: key.lastUsedAt,
@@ -289,4 +297,3 @@ export function normalizeChannelPriority(value: unknown, fallback = 100) {
   }
   return numeric;
 }
-
