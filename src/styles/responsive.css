@@ -1,0 +1,404 @@
+@media (max-width: 1120px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 31;
+    width: min(320px, calc(100vw - 48px));
+    height: 100dvh;
+    overflow-y: auto;
+    border-right: 1px solid rgba(var(--accent-rgb), 0.18);
+    background: var(--surface);
+    transform: translateX(-100%);
+    box-shadow: 24px 0 64px rgba(15, 23, 42, 0.32);
+    transition: transform 0.22s ease;
+    overscroll-behavior: contain;
+  }
+
+  .sidebar.is-open {
+    transform: translateX(0);
+  }
+
+  .sidebar-close-button.icon-button,
+  .mobile-menu-button.icon-button {
+    display: inline-grid;
+    flex: 0 0 auto;
+  }
+
+  .sidebar-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: block;
+    border: 0;
+    background: rgba(15, 23, 42, 0.56);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease;
+  }
+
+  .sidebar-scrim.is-open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .nav-list {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-grid,
+  .overview-card-grid,
+  .overview-hero,
+  .split-grid,
+  .plan-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .quick-access-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .announcement-overview-grid,
+  .announcement-meta-grid,
+  .announcement-status-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .announcement-editor-layout {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .announcement-command-bar,
+  .announcement-command-actions,
+  .announcement-toolbar,
+  .announcement-editor-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .announcement-command-actions,
+  .announcement-toolbar-group {
+    justify-content: flex-start;
+  }
+
+  .announcement-status-strip > div {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .announcement-status-strip > div:last-child {
+    border-bottom: 0;
+  }
+
+  .announcement-editor-surface textarea {
+    min-height: 220px;
+    padding: 16px;
+  }
+
+  .announcement-editor-head,
+  .announcement-preview-head,
+  .announcement-preview-window-head,
+  .announcement-tips,
+  .announcement-preview-actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .taobao-mapping-form,
+  .taobao-product-grid,
+  .taobao-split-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .upgrade-plan-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .key-row,
+  .key-table-row,
+  .gift-card-row,
+  .order-history-row,
+  .product-link-card,
+  .model-rate-row,
+  .upstream-key-row,
+  .log-row,
+  .log-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .key-table-head,
+  .gift-card-table-head,
+  .order-history-head,
+  .log-head {
+    display: none;
+  }
+
+  .cost-breakdown {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .row-actions {
+    justify-content: flex-start;
+  }
+
+  .current-plan-card {
+    align-items: flex-start;
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .main-panel,
+  .sidebar {
+    padding: 16px;
+  }
+
+  .auth-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .auth-footer-actions {
+    justify-content: flex-start;
+  }
+
+  .auth-footer .upgrade-link-button {
+    width: 100%;
+  }
+
+  .topbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .topbar-title h1 {
+    white-space: normal;
+  }
+
+  .topbar-actions {
+    justify-content: flex-start;
+  }
+
+  .claim-topbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .metric-grid,
+  .overview-card-grid,
+  .overview-hero,
+  .overview-metrics,
+  .channel-url-grid,
+  .product-link-url-grid,
+  .model-rate-groups,
+  .channel-form-grid,
+  .gift-card-form-grid,
+  .split-grid,
+  .plan-grid,
+  .upgrade-plan-grid,
+  .purchase-channel-grid,
+  .purchase-product-grid,
+  .claim-form,
+  .taobao-mapping-form,
+  .taobao-permit-row,
+  .taobao-product-grid,
+  .taobao-split-grid,
+  .taobao-mini-row,
+  .redeem-row,
+  .form-row,
+  .plan-form-row,
+  .nav-list,
+  .quota-pair,
+  .cost-breakdown {
+    grid-template-columns: 1fr;
+  }
+
+  .quick-access-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .log-filters label {
+    width: 100%;
+  }
+
+  .log-summary {
+    gap: 8px;
+  }
+
+  .key-table-row {
+    align-items: start;
+  }
+
+  .channel-card-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .pagination-page-list {
+    display: none;
+  }
+
+  .pagination-jump-form {
+    flex: 0 0 auto;
+  }
+
+  .pagination-jump-form input {
+    width: 58px;
+  }
+
+  .pagination-bar {
+    flex-wrap: wrap;
+  }
+
+  .wide-field {
+    grid-column: span 1;
+  }
+
+  .bar-row {
+    grid-template-columns: 52px 1fr 58px;
+  }
+
+  .guide-intro {
+    grid-template-columns: 1fr;
+  }
+
+  .guide-intro-icon {
+    width: 78px;
+    height: 78px;
+  }
+
+  .guide-intro-icon img {
+    width: 56px;
+    height: 50px;
+  }
+
+  .guide-document {
+    padding: 16px;
+  }
+
+  .guide-selector-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .guide-selector-panel > div {
+    width: 100%;
+  }
+
+  .markdown-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .markdown-toc {
+    position: static;
+    display: flex;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 6px;
+  }
+
+  .markdown-toc-item {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: 220px;
+    white-space: nowrap;
+  }
+
+  .markdown-toc-item.level-3,
+  .markdown-toc-item.level-4 {
+    padding-left: 9px;
+  }
+
+  .secret-output {
+    grid-template-columns: 1fr;
+  }
+
+  .billing-page {
+    gap: 24px;
+    padding: 8px 0 24px;
+  }
+
+  .billing-page-head {
+    padding-bottom: 20px;
+  }
+
+  .billing-page-head h1 {
+    font-size: 28px;
+  }
+
+  .billing-section h2 {
+    font-size: 22px;
+  }
+
+  .billing-section-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .current-plan-card,
+  .redeem-card-panel {
+    padding: 18px;
+  }
+
+  .redeem-card-panel {
+    padding: 14px 16px;
+  }
+
+  .free-plan-badge {
+    width: 132px;
+    min-height: 72px;
+    font-size: 28px;
+  }
+
+  .current-plan-card p,
+  .redeem-card-panel p {
+    font-size: 14px;
+  }
+
+  .redeem-row button {
+    width: 100%;
+  }
+
+  .upgrade-page {
+    padding: 0 0 28px;
+  }
+
+  .upgrade-hero {
+    margin: 26px auto 28px;
+    gap: 14px;
+  }
+
+  .upgrade-hero h1 {
+    font-size: 34px;
+  }
+
+  .upgrade-price-note {
+    align-items: flex-start;
+    border-radius: 8px;
+  }
+
+  .upgrade-card {
+    min-height: auto;
+  }
+
+  .gift-card-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-summary > div,
+  .quota-overview-head,
+  .quota-overview-foot {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

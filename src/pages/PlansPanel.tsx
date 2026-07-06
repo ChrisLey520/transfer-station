@@ -1,16 +1,15 @@
 import { LoadingContent } from '../components/common.js';
 import { RechargeModal } from '../components/RechargeModal.js';
-import { buildRechargeModalProps, showErrorToast, showSuccessToast } from '../components/toast.js';
-import { upgradePlans } from '../config/purchase.js';
+import { buildRechargeModalProps } from '../components/toast.js';
 import { tr } from '../i18n.js';
-import { Bootstrap, GiftCardPreview, PlanView, UpgradePlan } from '../types.js';
-import { readJsonResponse, responseErrorMessage, unknownErrorMessage } from '../utils/api.js';
-import { compact, currency, currencyNoDecimals, dollarsToCents } from '../utils/format.js';
+import type { Bootstrap, PlanView } from '../types.js';
+import { compact, currency } from '../utils/format.js';
 import { buildAccountQuota, emptyQuota } from '../utils/quota.js';
 import { futureDateLabel } from '../utils/time.js';
-import { GiftCardConfirmModal } from './GiftCardsPanel.js';
-import { Check, Plus } from 'lucide-react';
-import React from 'react';
+import { GiftCardConfirmModal } from './gift-cards/GiftCardModals.js';
+import { PlanChangePage } from './plans/PlanChangePage.js';
+import { usePlansPanel } from './plans/usePlansPanel.js';
+import { Plus } from 'lucide-react';
 
 export function PlansPanel({
   data,
@@ -27,11 +26,7 @@ export function PlansPanel({
   view: PlanView;
   setView: (view: PlanView) => void;
 }) {
-  const [redeemCode, setRedeemCode] = React.useState('');
-  const [giftPreview, setGiftPreview] = React.useState<GiftCardPreview | null>(null);
-  const [isRedeeming, setIsRedeeming] = React.useState(false);
-  const [purchaseTarget, setPurchaseTarget] = React.useState<UpgradePlan | null>(null);
-  const [isRechargeOpen, setIsRechargeOpen] = React.useState(false);
+  const panel = usePlansPanel({ headers, reload, t });
   const primaryKey = data.keys.find((key) => key.status === 'active') || data.keys[0];
   const accountPlan =
     data.plans.find((plan) => plan.id === data.account.currentPlanId) ||
@@ -40,92 +35,16 @@ export function PlansPanel({
   const currencyCode = accountPlan?.currency || 'CNY';
   const planResetLabel = futureDateLabel(data.account.planExpiresAt);
 
-  async function redeem(event: React.FormEvent) {
-    event.preventDefault();
-    const code = redeemCode.trim();
-    if (!code) return;
-    if (isRedeeming) return;
-    setIsRedeeming(true);
-    try {
-      const response = await fetch('/api/user/gift-cards/preview', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ code })
-      });
-      const payload = await readJsonResponse(response);
-      if (!response.ok) {
-        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
-        return;
-      }
-      const result = payload as GiftCardPreview;
-      if (result.requiresConfirmation) {
-        setGiftPreview(result);
-        return;
-      }
-      await redeemCreditGiftCard(code);
-    } catch (error) {
-      showErrorToast(unknownErrorMessage(error, t.requestFailed));
-    } finally {
-      setIsRedeeming(false);
-    }
-  }
-
-  async function redeemCreditGiftCard(code: string) {
-    try {
-      const response = await fetch('/api/user/gift-cards/redeem', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ code })
-      });
-      const payload = await readJsonResponse(response);
-      if (!response.ok) {
-        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
-        return;
-      }
-      showSuccessToast((payload as { message?: string }).message || t.redeem);
-      setRedeemCode('');
-      await reload();
-    } catch (error) {
-      showErrorToast(unknownErrorMessage(error, t.requestFailed));
-    }
-  }
-
-  async function confirmGiftCard() {
-    if (!giftPreview) return;
-    if (isRedeeming) return;
-    setIsRedeeming(true);
-    try {
-      const response = await fetch('/api/user/gift-cards/redeem', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ code: giftPreview.card.code, confirm: true })
-      });
-      const payload = await readJsonResponse(response);
-      if (!response.ok) {
-        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
-        return;
-      }
-      setGiftPreview(null);
-      setRedeemCode('');
-      showSuccessToast((payload as { message?: string }).message || t.redeem);
-      await reload();
-    } catch (error) {
-      showErrorToast(unknownErrorMessage(error, t.requestFailed));
-    } finally {
-      setIsRedeeming(false);
-    }
-  }
-
   if (view === 'change') {
     return (
       <>
         <PlanChangePage
           currentPlanId={data.account.currentPlanId || undefined}
-          openPurchaseDialog={setPurchaseTarget}
+          openPurchaseDialog={panel.setPurchaseTarget}
           t={t}
         />
-        {purchaseTarget ? (
-          <RechargeModal {...buildRechargeModalProps(t, () => setPurchaseTarget(null))} />
+        {panel.purchaseTarget ? (
+          <RechargeModal {...buildRechargeModalProps(t, () => panel.setPurchaseTarget(null))} />
         ) : null}
       </>
     );
@@ -179,7 +98,7 @@ export function PlansPanel({
               <strong>{compact(data.summary.todayRequests)}</strong>
             </div>
           </div>
-          <button type="button" className="primary-button" onClick={() => setIsRechargeOpen(true)}>
+          <button type="button" className="primary-button" onClick={() => panel.setIsRechargeOpen(true)}>
             <Plus size={16} />
             {t.recharge}
           </button>
@@ -188,108 +107,35 @@ export function PlansPanel({
 
       <section className="billing-section redeem-card-section">
         <h2>{t.redeemCard}</h2>
-        <form className="redeem-card-panel" onSubmit={redeem}>
+        <form className="redeem-card-panel" onSubmit={panel.redeem}>
           <p>{t.redeemCardHint}</p>
           <div className="redeem-row">
             <input
               className="redeem-card-input"
-              value={redeemCode}
-              onChange={(event) => setRedeemCode(event.target.value)}
+              value={panel.redeemCode}
+              onChange={(event) => panel.setRedeemCode(event.target.value)}
               placeholder={t.redeemCardPlaceholder}
             />
-            <button type="submit" disabled={!redeemCode.trim() || isRedeeming}>
-              <LoadingContent loading={isRedeeming} loadingLabel={tr(t, 'redeeming', '兑换中...')}>
+            <button type="submit" disabled={!panel.redeemCode.trim() || panel.isRedeeming}>
+              <LoadingContent loading={panel.isRedeeming} loadingLabel={tr(t, 'redeeming', '兑换中...')}>
                 {t.redeem}
               </LoadingContent>
             </button>
           </div>
         </form>
       </section>
-      {giftPreview ? (
+      {panel.giftPreview ? (
         <GiftCardConfirmModal
-          preview={giftPreview}
+          preview={panel.giftPreview}
           t={t}
-          disabled={isRedeeming}
-          onConfirm={confirmGiftCard}
-          onClose={() => setGiftPreview(null)}
+          disabled={panel.isRedeeming}
+          onConfirm={panel.confirmGiftCard}
+          onClose={() => panel.setGiftPreview(null)}
         />
       ) : null}
-      {isRechargeOpen ? (
-        <RechargeModal {...buildRechargeModalProps(t, () => setIsRechargeOpen(false))} />
+      {panel.isRechargeOpen ? (
+        <RechargeModal {...buildRechargeModalProps(t, () => panel.setIsRechargeOpen(false))} />
       ) : null}
-    </section>
-  );
-}
-
-export function PlanChangePage({
-  currentPlanId,
-  openPurchaseDialog,
-  t
-}: {
-  currentPlanId?: string;
-  openPurchaseDialog: (plan: UpgradePlan) => void;
-  t: Record<string, string>;
-}) {
-  return (
-    <section className="upgrade-page">
-      <section className="upgrade-hero">
-        <p>{t.upgradeEyebrow}</p>
-        <h1>
-          {t.upgradeTitleBefore} <span>{t.upgradeTitleAccent}</span>。
-        </h1>
-        <div className="upgrade-price-note">
-          <span>{t.upgradeUnitBadge}</span>
-          <strong>{t.upgradeUnitLine}</strong>
-        </div>
-      </section>
-
-      <div className="upgrade-plan-grid">
-        {upgradePlans.map((plan) => (
-          <article
-            className={plan.recommended ? 'upgrade-card recommended' : 'upgrade-card'}
-            key={plan.id}
-          >
-            {plan.recommended ? <div className="recommended-badge">{t.recommendedUpgrade}</div> : null}
-            <div className="upgrade-card-head">
-              <h2>{plan.name}</h2>
-              <p>{plan.subtitle}</p>
-            </div>
-            <div className="upgrade-price">
-              <span>￥</span>
-              <strong>{plan.monthlyPriceYuan}</strong>
-            </div>
-            <p className="upgrade-billing">{t.monthlyBilling}</p>
-            <button
-              type="button"
-              className={plan.recommended ? 'primary-button upgrade-cta' : 'secondary-button upgrade-cta'}
-              onClick={() => openPurchaseDialog(plan)}
-              aria-pressed={currentPlanId === plan.id}
-            >
-              {t.switchToPlan.replace('{plan}', plan.name)}
-            </button>
-            <div className="upgrade-quota-box">
-              <span>{t.rateLimitQuota}</span>
-              <div>
-                <strong>{currencyNoDecimals(dollarsToCents(plan.fiveHourCreditUsd), 'USD')}</strong>
-                <strong>{currencyNoDecimals(dollarsToCents(plan.weeklyCreditUsd), 'USD')}</strong>
-              </div>
-              <div>
-                <small>{t.fiveHourShort}</small>
-                <small>{t.sevenDayShort}</small>
-              </div>
-            </div>
-            <ul className="upgrade-features">
-              {plan.features.map((feature) => (
-                <li key={feature}>
-                  <Check size={14} />
-                  <span>{feature}</span>
-                </li>
-              ))}
-            </ul>
-          </article>
-        ))}
-      </div>
-      <p className="upgrade-footnote">{t.planFootnote}</p>
     </section>
   );
 }

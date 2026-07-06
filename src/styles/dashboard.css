@@ -1,0 +1,474 @@
+.overview-page {
+  display: grid;
+  gap: 18px;
+}
+
+.overview-welcome {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.overview-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.overview-card,
+.quick-access-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card-gradient);
+  box-shadow: var(--shadow);
+}
+
+.overview-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 214px;
+  padding: 18px;
+}
+
+.overview-card-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--teal);
+}
+
+.overview-card-icon.blue {
+  background: rgba(47, 114, 168, 0.12);
+  color: var(--blue);
+}
+
+.overview-card-icon.amber {
+  background: rgba(188, 122, 22, 0.13);
+  color: var(--amber);
+}
+
+.overview-card-icon.rose {
+  background: rgba(187, 79, 97, 0.13);
+  color: var(--rose);
+}
+
+.overview-card span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.overview-card strong {
+  overflow-wrap: anywhere;
+  font-size: clamp(26px, 3vw, 36px);
+  line-height: 1;
+}
+
+.overview-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.overview-card button {
+  width: fit-content;
+  margin-top: auto;
+}
+
+.current-plan-overview strong {
+  font-size: clamp(24px, 2.5vw, 32px);
+}
+
+.quick-access-panel {
+  padding: 18px;
+}
+
+.quick-access-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.quick-access-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 76px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card-gradient);
+  color: var(--ink);
+  text-align: left;
+}
+
+.quick-access-card:hover {
+  border-color: rgba(var(--accent-rgb), 0.45);
+  background: var(--card-gradient-strong);
+}
+
+.quick-access-card svg {
+  color: var(--teal);
+}
+
+.quick-access-card strong {
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.overview-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(260px, 0.9fr);
+  gap: 18px;
+}
+
+.plan-summary,
+.balance-summary,
+.metric-grid {
+  display: grid;
+}
+
+.plan-summary,
+.balance-summary {
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card-gradient);
+  box-shadow: var(--shadow);
+}
+
+.plan-summary > span,
+.balance-summary > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.plan-summary > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.plan-summary h2,
+.balance-summary strong {
+  margin: 0;
+  font-size: clamp(26px, 3vw, 38px);
+  line-height: 1;
+}
+
+.plan-summary p,
+.balance-summary p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.plan-limit-pair {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.plan-limit-pair span {
+  display: inline-flex;
+  gap: 6px;
+  min-height: 32px;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(var(--surface-rgb), 0.72);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.plan-limit-pair strong {
+  color: var(--ink);
+}
+
+.balance-summary {
+  align-content: start;
+}
+
+.balance-summary .primary-button {
+  width: fit-content;
+}
+
+.metric-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.overview-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric-tile,
+.wide-panel,
+.table-panel,
+.form-panel,
+.plan-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card-gradient);
+  box-shadow: var(--shadow);
+}
+
+.metric-tile {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 8px 10px;
+  min-height: 116px;
+  padding: 18px;
+}
+
+.metric-tile svg {
+  grid-row: span 2;
+}
+
+.metric-tile span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.metric-tile strong {
+  font-size: clamp(24px, 3vw, 34px);
+  line-height: 1;
+}
+
+.metric-tile.teal svg {
+  color: var(--teal);
+}
+
+.metric-tile.blue svg {
+  color: var(--blue);
+}
+
+.metric-tile.amber svg {
+  color: var(--amber);
+}
+
+.metric-tile.rose svg {
+  color: var(--rose);
+}
+
+.wide-panel,
+.table-panel,
+.form-panel {
+  padding: 18px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.section-heading h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.section-heading p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.section-heading > strong {
+  font-size: 26px;
+}
+
+.bar-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.quota-overview-list {
+  display: grid;
+  gap: 18px;
+}
+
+.quota-overview-row {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-gradient);
+}
+
+.quota-overview-head,
+.quota-overview-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quota-overview-head > div {
+  display: grid;
+  gap: 4px;
+}
+
+.quota-overview-head strong {
+  font-size: 15px;
+}
+
+.quota-overview-head > strong {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 18px;
+}
+
+.quota-overview-head span,
+.quota-overview-foot {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 72px 1fr 76px;
+  align-items: center;
+  gap: 12px;
+}
+
+.bar-row span,
+.bar-row strong {
+  font-size: 13px;
+}
+
+.bar-track,
+.meter-track {
+  overflow: hidden;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(var(--surface-rgb), 0.66);
+}
+
+.bar-track div,
+.meter-track div {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.split-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(140px, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.plan-form-row {
+  grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 0.8fr) minmax(150px, 0.8fr) auto;
+}
+
+.form-row label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.wide-field {
+  grid-column: span 2;
+}
+
+.secret-output {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--accent-soft-strong);
+  border-radius: 8px;
+  background: var(--accent-soft);
+}
+
+.secret-output span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.secret-output.once {
+  grid-template-columns: 1fr auto;
+}
+
+.secret-output.once span {
+  grid-column: 1 / -1;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(14, 22, 18, 0.42);
+  backdrop-filter: blur(16px) saturate(1.16);
+  -webkit-backdrop-filter: blur(16px) saturate(1.16);
+}
+
+.modal-panel {
+  display: grid;
+  gap: 16px;
+  width: min(100%, 520px);
+  padding: 20px;
+  border: 1px solid rgba(var(--accent-rgb), 0.18);
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, rgba(var(--surface-rgb), 0.92), rgba(var(--surface-rgb), 0.78)),
+    var(--panel-gradient);
+  box-shadow: 0 28px 90px rgba(15, 23, 42, 0.3);
+  backdrop-filter: blur(24px) saturate(1.18);
+  -webkit-backdrop-filter: blur(24px) saturate(1.18);
+}
+
+.modal-panel-danger {
+  width: min(100%, 440px);
+}
+
+.modal-panel label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.modal-panel input,
+.modal-panel select,
+.modal-panel textarea {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 10px;
+  outline: none;
+}
+
+.modal-panel input:focus,
+.modal-panel select:focus,
+.modal-panel textarea:focus {
+  border-color: var(--teal);
+}
+
