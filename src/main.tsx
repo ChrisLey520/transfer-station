@@ -1,4 +1,5 @@
 import React from 'react';
+import dayjs from 'dayjs';
 import { createRoot } from 'react-dom/client';
 import {
   autoUpdate,
@@ -321,6 +322,7 @@ type UpstreamChannel = {
   id: string;
   channelNumber: number;
   name: string;
+  websiteUrl: string;
   status: 'active' | 'paused' | 'banned';
   claudeApiUrl: string;
   codexApiUrl: string;
@@ -514,6 +516,10 @@ const dictionary = {
     last30Days: '最近 30 天',
     previousPage: '上一页',
     nextPage: '下一页',
+    quickPages: '快捷页码',
+    jumpToPage: '跳转',
+    pageNumber: '页码',
+    totalItems: '共 {total} 条',
     logTotal: '共 {total} 条',
     requestTime: '请求时间',
     cacheCreation: '创建缓存',
@@ -534,6 +540,7 @@ const dictionary = {
     action: '操作',
     use: '使用',
     delete: '删除',
+    clone: '克隆',
     createApiKey: '创建 API 密钥',
     createApiKeyDescription: '给密钥起一个描述性名称，便于日后识别。请勿随意分享给他人或在第三方网站使用，防止泄露。',
     importToCcSwitch: '导入到 CC-Switch',
@@ -611,6 +618,11 @@ const dictionary = {
     upstreamMissing: '上游 Key 未配置',
     upstreamReady: '上游已配置',
     requestFailed: '请求失败，请稍后重试。',
+    cloneChannelConfirm: '确认克隆这个渠道？',
+    cloneChannelHint: '会复制渠道配置和模型计费信息。',
+    cloneApiKeyOption: '同时克隆 API Key',
+    cloneChannelSuccess: '渠道已克隆。',
+    cloning: '克隆中...',
     available: '可用',
     quotaInsufficient: '额度不足',
     channelInternalError: '渠道内部错误',
@@ -775,6 +787,10 @@ const dictionary = {
     last30Days: '最近 30 天',
     previousPage: '上一頁',
     nextPage: '下一頁',
+    quickPages: '快捷頁碼',
+    jumpToPage: '跳轉',
+    pageNumber: '頁碼',
+    totalItems: '共 {total} 筆',
     logTotal: '共 {total} 筆',
     requestTime: '請求時間',
     cacheCreation: '建立快取',
@@ -795,6 +811,7 @@ const dictionary = {
     action: '操作',
     use: '使用',
     delete: '刪除',
+    clone: '克隆',
     createApiKey: '建立 API 金鑰',
     createApiKeyDescription: '給金鑰起一個描述性名稱，便於日後識別。請勿隨意分享給他人或在第三方網站使用，防止洩露。',
     importToCcSwitch: '匯入到 CC-Switch',
@@ -872,6 +889,11 @@ const dictionary = {
     upstreamMissing: '上游 Key 未設定',
     upstreamReady: '上游已設定',
     requestFailed: '請求失敗，請稍後再試。',
+    cloneChannelConfirm: '確認克隆這個渠道？',
+    cloneChannelHint: '會複製渠道設定和模型計費資訊。',
+    cloneApiKeyOption: '同時克隆 API Key',
+    cloneChannelSuccess: '渠道已克隆。',
+    cloning: '克隆中...',
     available: '可用',
     quotaInsufficient: '額度不足',
     channelInternalError: '渠道內部錯誤',
@@ -1036,6 +1058,10 @@ const dictionary = {
     last30Days: 'Last 30 days',
     previousPage: 'Previous',
     nextPage: 'Next',
+    quickPages: 'Quick pages',
+    jumpToPage: 'Go',
+    pageNumber: 'Page',
+    totalItems: '{total} total',
     logTotal: '{total} total',
     requestTime: 'Request time',
     cacheCreation: 'Cache creation',
@@ -1056,6 +1082,7 @@ const dictionary = {
     action: 'Actions',
     use: 'Use',
     delete: 'Delete',
+    clone: 'Clone',
     createApiKey: 'Create API key',
     createApiKeyDescription: 'Give your key a descriptive name so you can identify it later. Do not share it with others or use it on third-party websites to prevent leaks.',
     importToCcSwitch: 'Import to CC-Switch',
@@ -1133,6 +1160,11 @@ const dictionary = {
     upstreamMissing: 'Upstream key missing',
     upstreamReady: 'Upstream configured',
     requestFailed: 'Request failed. Please try again.',
+    cloneChannelConfirm: 'Clone this channel?',
+    cloneChannelHint: 'Channel settings and model billing rates will be copied.',
+    cloneApiKeyOption: 'Also clone API keys',
+    cloneChannelSuccess: 'Channel cloned.',
+    cloning: 'Cloning...',
     available: 'Available',
     quotaInsufficient: 'Quota exhausted',
     channelInternalError: 'Internal channel error',
@@ -1521,7 +1553,7 @@ function tr(t: Record<string, string>, key: string, fallback: string) {
 
 function futureTimestamp(value: string | null | undefined, now = Date.now()) {
   if (!value) return null;
-  const timestamp = Date.parse(value);
+  const timestamp = dayjs(value).valueOf();
   return Number.isFinite(timestamp) && timestamp > now ? timestamp : null;
 }
 
@@ -1666,9 +1698,9 @@ function planProductOptionLabel(option: PlanProductOption) {
 }
 
 function formatDateTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
+  const date = dayjs(value);
+  if (!date.isValid()) return value;
+  return date.format('YYYY-MM-DD HH:mm:ss');
 }
 
 function ChevronUpIcon() {
@@ -2623,83 +2655,83 @@ function ThemeMenu({
   t: Record<string, string>;
 }) {
   const [isOpen, setIsOpen] = React.useState(false);
-  const menuRef = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
-    if (!isOpen) return;
-
-    function closeOnOutsideClick(event: PointerEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    }
-
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') setIsOpen(false);
-    }
-
-    document.addEventListener('pointerdown', closeOnOutsideClick);
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('pointerdown', closeOnOutsideClick);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [isOpen]);
+  const { refs, floatingStyles, context } = useFloating({
+    open: isOpen,
+    onOpenChange: setIsOpen,
+    placement: 'bottom-end',
+    strategy: 'fixed',
+    whileElementsMounted: autoUpdate,
+    middleware: [offset(8), flip({ padding: 12 }), shift({ padding: 12 })]
+  });
+  const dismiss = useDismiss(context);
+  const role = useRole(context, { role: 'menu' });
+  const { getReferenceProps, getFloatingProps } = useInteractions([dismiss, role]);
 
   return (
-    <div className="theme-menu" ref={menuRef}>
+    <div className="theme-menu">
       <button
-        type="button"
-        className="icon-button"
-        onClick={() => setIsOpen((value) => !value)}
-        aria-expanded={isOpen}
-        aria-haspopup="menu"
-        title={t.theme}
+        ref={refs.setReference}
+        {...getReferenceProps({
+          type: 'button',
+          className: 'icon-button',
+          onClick: () => setIsOpen((value) => !value),
+          'aria-expanded': isOpen,
+          'aria-haspopup': 'menu',
+          title: t.theme
+        })}
       >
         <Palette size={17} />
       </button>
       {isOpen ? (
-        <div className="theme-menu-panel" role="menu" aria-label={t.theme}>
-          <div className="theme-menu-section">
-            <span>{t.themeMode}</span>
-            <div className="theme-mode-control">
-              {themeModeOptions.map((option) => {
-                const Icon = option.icon;
-                return (
+        <FloatingPortal>
+          <div
+            ref={refs.setFloating}
+            className="theme-menu-panel"
+            style={floatingStyles}
+            aria-label={t.theme}
+            {...getFloatingProps()}
+          >
+            <div className="theme-menu-section">
+              <span>{t.themeMode}</span>
+              <div className="theme-mode-control">
+                {themeModeOptions.map((option) => {
+                  const Icon = option.icon;
+                  return (
+                    <button
+                      type="button"
+                      className={themeMode === option.id ? 'theme-mode-button active' : 'theme-mode-button'}
+                      key={option.id}
+                      onClick={() => setThemeMode(option.id)}
+                      title={t[option.labelKey]}
+                    >
+                      <Icon size={15} />
+                      <span>{t[option.labelKey]}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="theme-menu-section">
+              <span>{t.themeColor}</span>
+              <div className="accent-grid">
+                {accentThemeOptions.map((option) => (
                   <button
                     type="button"
-                    className={themeMode === option.id ? 'theme-mode-button active' : 'theme-mode-button'}
+                    className={accentTheme === option.id ? 'accent-swatch active' : 'accent-swatch'}
+                    data-accent-option={option.id}
                     key={option.id}
-                    onClick={() => setThemeMode(option.id)}
+                    onClick={() => setAccentTheme(option.id)}
                     title={t[option.labelKey]}
+                    aria-label={t[option.labelKey]}
                   >
-                    <Icon size={15} />
-                    <span>{t[option.labelKey]}</span>
+                    <span />
+                    <strong>{t[option.labelKey]}</strong>
                   </button>
-                );
-              })}
+                ))}
+              </div>
             </div>
           </div>
-          <div className="theme-menu-section">
-            <span>{t.themeColor}</span>
-            <div className="accent-grid">
-              {accentThemeOptions.map((option) => (
-                <button
-                  type="button"
-                  className={accentTheme === option.id ? 'accent-swatch active' : 'accent-swatch'}
-                  data-accent-option={option.id}
-                  key={option.id}
-                  onClick={() => setAccentTheme(option.id)}
-                  title={t[option.labelKey]}
-                  aria-label={t[option.labelKey]}
-                >
-                  <span />
-                  <strong>{t[option.labelKey]}</strong>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+        </FloatingPortal>
       ) : null}
     </div>
   );
@@ -4116,7 +4148,6 @@ function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersIn
   });
   const [generatedCards, setGeneratedCards] = React.useState<AdminGiftCard[]>([]);
   const [loading, setLoading] = React.useState(false);
-  const [giftCardPagingAction, setGiftCardPagingAction] = React.useState<'prev' | 'next' | null>(null);
   const [giftCardFilterAction, setGiftCardFilterAction] = React.useState<GiftCardFormType | null>(null);
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [copiedCode, setCopiedCode] = React.useState('');
@@ -4163,7 +4194,6 @@ function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersIn
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
     } finally {
       setLoading(false);
-      setGiftCardPagingAction(null);
       setGiftCardFilterAction(null);
     }
   }, [activeGiftCardType, giftCardPageNumber, headers, t.requestFailed]);
@@ -4259,7 +4289,6 @@ function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersIn
     }
   }
 
-  const pageCount = Math.max(1, Math.ceil(giftCardPage.total / giftCardPage.pageSize));
   const planGiftCardCount = giftCardPage.typeCounts.plan || 0;
   const creditGiftCardCount = giftCardPage.typeCounts.credit || 0;
 
@@ -4328,38 +4357,15 @@ function GiftCardsPanel({ headers, plans, refreshTick, t }: { headers: HeadersIn
               onRequestRevoke={setRevokeTarget}
               t={t}
             />
-            <div className="pagination-bar">
-              <span>{tr(t, 'giftCardTotal', '共 {total} 个礼品码').replace('{total}', String(giftCardPage.total))}</span>
-              <div>
-                <button
-                  type="button"
-                  className="icon-button compact"
-                  onClick={() => {
-                    setGiftCardPagingAction('prev');
-                    setGiftCardPageNumber((value) => value - 1);
-                  }}
-                  disabled={loading || giftCardPageNumber <= 1}
-                  title={t.previousPage}
-                >
-                  {giftCardPagingAction === 'prev' ? <ButtonSpinner size={16} /> : <ChevronLeft size={16} />}
-                </button>
-                <strong>
-                  {giftCardPageNumber} / {pageCount}
-                </strong>
-                <button
-                  type="button"
-                  className="icon-button compact"
-                  onClick={() => {
-                    setGiftCardPagingAction('next');
-                    setGiftCardPageNumber((value) => value + 1);
-                  }}
-                  disabled={loading || giftCardPageNumber >= pageCount}
-                  title={t.nextPage}
-                >
-                  {giftCardPagingAction === 'next' ? <ButtonSpinner size={16} /> : <ChevronRight size={16} />}
-                </button>
-              </div>
-            </div>
+            <PaginationBar
+              page={giftCardPage.page}
+              pageSize={giftCardPage.pageSize}
+              total={giftCardPage.total}
+              onPageChange={setGiftCardPageNumber}
+              loading={loading}
+              t={t}
+              totalLabel={tr(t, 'giftCardTotal', '共 {total} 个礼品码').replace('{total}', String(giftCardPage.total))}
+            />
           </div>
         ) : null}
       </section>
@@ -5231,6 +5237,7 @@ function buildProductLinkForm(productRows: PurchaseProductOption[], productLinks
 const emptyChannelForm = {
   id: '',
   name: '',
+  websiteUrl: '',
   status: 'active' as UpstreamChannel['status'],
   claudeApiUrl: '',
   codexApiUrl: '',
@@ -5248,6 +5255,7 @@ function channelToForm(channel: UpstreamChannel) {
   return {
     id: channel.id,
     name: channel.name,
+    websiteUrl: channel.websiteUrl,
     status: channel.status,
     claudeApiUrl: channel.claudeApiUrl,
     codexApiUrl: channel.codexApiUrl,
@@ -5272,21 +5280,20 @@ function dateTimeLocalValue(value: string | null) {
 
 function dateTimeLocalToIso(value: string) {
   if (!value) return null;
-  const timestamp = new Date(value).getTime();
-  return Number.isNaN(timestamp) ? null : new Date(timestamp).toISOString();
+  const date = dayjs(value);
+  return date.isValid() ? date.toISOString() : null;
 }
 
 function displayDateTime(value: string | null) {
   if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  const pad = (input: number) => String(input).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  const date = dayjs(value);
+  if (!date.isValid()) return value;
+  return date.format('YYYY-MM-DD HH:mm:ss');
 }
 
 function isPastDate(value: string | null) {
   if (!value) return false;
-  const timestamp = Date.parse(value);
+  const timestamp = dayjs(value).valueOf();
   return Number.isFinite(timestamp) && timestamp <= Date.now();
 }
 
@@ -5383,10 +5390,13 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
   const [keyEditIsPermanent, setKeyEditIsPermanent] = React.useState(true);
   const [modelRateTarget, setModelRateTarget] = React.useState<UpstreamModelRateTarget | null>(null);
   const [modelRateForm, setModelRateForm] = React.useState(emptyModelRateForm);
+  const [cloneTarget, setCloneTarget] = React.useState<UpstreamChannel | null>(null);
+  const [cloneIncludesKeys, setCloneIncludesKeys] = React.useState(false);
   const [deleteTarget, setDeleteTarget] = React.useState<UpstreamChannel | null>(null);
   const [keyDeleteTarget, setKeyDeleteTarget] = React.useState<UpstreamKeyDeleteTarget | null>(null);
   const [channelStatusUpdatingId, setChannelStatusUpdatingId] = React.useState<string | null>(null);
   const [savingChannel, setSavingChannel] = React.useState(false);
+  const [cloningChannelId, setCloningChannelId] = React.useState('');
   const [deletingChannelId, setDeletingChannelId] = React.useState('');
   const [savingKey, setSavingKey] = React.useState(false);
   const [savingEditedKey, setSavingEditedKey] = React.useState(false);
@@ -5465,6 +5475,42 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
       showErrorToast(unknownErrorMessage(error, t.requestFailed));
     } finally {
       setSavingChannel(false);
+    }
+  }
+
+  function openClone(channel: UpstreamChannel) {
+    setCloneTarget(channel);
+    setCloneIncludesKeys(false);
+  }
+
+  async function cloneChannel(channel: UpstreamChannel) {
+    if (cloningChannelId) return;
+    setCloningChannelId(channel.id);
+    try {
+      const response = await fetch(`/api/upstream-channels/${channel.id}/clone`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ includeKeys: cloneIncludesKeys })
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+
+      const nextChannels = (payload as { channel?: UpstreamChannel; channels?: UpstreamChannel[] }).channels || [];
+      const clonedChannel = (payload as { channel?: UpstreamChannel }).channel;
+      setChannels(nextChannels);
+      if (clonedChannel?.id) {
+        setExpandedChannelIds((current) => new Set(current).add(clonedChannel.id));
+      }
+      setCloneTarget(null);
+      setCloneIncludesKeys(false);
+      showSuccessToast(tr(t, 'cloneChannelSuccess', '渠道已克隆。'));
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setCloningChannelId('');
     }
   }
 
@@ -5741,6 +5787,7 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
                 onEdit={() => openEdit(channel)}
                 onChannelStatus={(status) => updateChannelStatus(channel, status)}
                 isChannelStatusUpdating={channelStatusUpdatingId === channel.id}
+                onClone={() => openClone(channel)}
                 onAddKey={() => {
                   setKeyTarget(channel);
                   setKeyAgentType(channel.useIndependentAgentKeys ? 'claude-code' : 'shared');
@@ -5781,6 +5828,16 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
                   onChange={(event) => setChannelForm((value) => ({ ...value, name: event.target.value }))}
                   required
                   autoFocus
+                />
+              </label>
+              <label className="wide-field">
+                {tr(t, 'officialWebsite', '官网地址')}
+                <input
+                  type="url"
+                  value={channelForm.websiteUrl}
+                  onChange={(event) => setChannelForm((value) => ({ ...value, websiteUrl: event.target.value }))}
+                  placeholder="https://example.com"
+                  required
                 />
               </label>
               <label>
@@ -5974,6 +6031,39 @@ function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersInit; refr
               </button>
             </div>
           </form>
+        </div>
+      ) : null}
+
+      {cloneTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel" role="dialog" aria-modal="true">
+            <div className="section-heading">
+              <div>
+                <h2>{tr(t, 'cloneChannelConfirm', '确认克隆这个渠道？')}</h2>
+                <p>{cloneTarget.name}</p>
+              </div>
+            </div>
+            <p className="modal-hint-text">{tr(t, 'cloneChannelHint', '会复制渠道配置和模型计费信息。')}</p>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={cloneIncludesKeys}
+                onChange={(event) => setCloneIncludesKeys(event.target.checked)}
+                disabled={Boolean(cloningChannelId)}
+              />
+              <span>{tr(t, 'cloneApiKeyOption', '同时克隆 API Key')}</span>
+            </label>
+            <div className="modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setCloneTarget(null)} disabled={Boolean(cloningChannelId)}>
+                {t.cancel}
+              </button>
+              <button type="button" className="primary-button" onClick={() => cloneChannel(cloneTarget)} disabled={Boolean(cloningChannelId)}>
+                <LoadingContent loading={cloningChannelId === cloneTarget.id} icon={<Copy size={16} />} loadingLabel={tr(t, 'cloning', '克隆中...')}>
+                  {tr(t, 'clone', '克隆')}
+                </LoadingContent>
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 
@@ -6195,6 +6285,7 @@ function ChannelCard({
   onEdit,
   onChannelStatus,
   isChannelStatusUpdating,
+  onClone,
   onAddKey,
   onDelete,
   onKeyStatus,
@@ -6215,6 +6306,7 @@ function ChannelCard({
   onEdit: () => void;
   onChannelStatus: (status: UpstreamChannel['status']) => void;
   isChannelStatusUpdating: boolean;
+  onClone: () => void;
   onAddKey: () => void;
   onDelete: () => void;
   onKeyStatus: (key: UpstreamChannelKey, status: UpstreamChannelKey['status']) => void;
@@ -6274,6 +6366,10 @@ function ChannelCard({
               </LoadingContent>
             </button>
           )}
+          <button type="button" className="secondary-button" onClick={onClone}>
+            <Copy size={16} />
+            {tr(t, 'clone', '克隆')}
+          </button>
           <button type="button" className="secondary-button" onClick={onEdit}>
             {tr(t, 'edit', '编辑')}
           </button>
@@ -6284,6 +6380,12 @@ function ChannelCard({
       </div>
 
       <div className="channel-url-grid">
+        <div>
+          <span>{tr(t, 'officialWebsite', '官网地址')}</span>
+          <a href={channel.websiteUrl} target="_blank" rel="noreferrer noopener">
+            <code>{channel.websiteUrl}</code>
+          </a>
+        </div>
         <div>
           <span>{selectedAgentTab === 'claude-code' ? 'Claude Code' : 'Codex'}</span>
           <code>{selectedAgentTab === 'claude-code' ? channel.claudeApiUrl : channel.codexApiUrl}</code>
@@ -6816,7 +6918,6 @@ function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers:
   const [loading, setLoading] = React.useState(false);
   const [pendingTab, setPendingTab] = React.useState<'usage' | 'claims' | 'redemptions' | null>(null);
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
-  const pageCount = Math.max(1, Math.ceil(logPage.total / logPage.pageSize));
 
   const loadLogs = React.useCallback(async () => {
     setLoading(true);
@@ -6992,9 +7093,9 @@ function LogsPanel({ keys, headers, refreshTick, t }: { keys: ApiKey[]; headers:
         {tab === 'usage' ? <LogRows logs={logPage.logs} t={t} expandedId={expandedId} setExpandedId={setExpandedId} /> : null}
         {tab === 'claims' ? <OrdersTable orders={claimPage.orders} /> : null}
         {tab === 'redemptions' ? <GiftRedemptionTable giftCards={redemptionPage.giftCards} /> : null}
-        {tab === 'usage' ? <PaginationBar page={usagePage} pageSize={logPage.pageSize} total={logPage.total} onPageChange={setUsagePage} loading={loading} /> : null}
-        {tab === 'claims' ? <PaginationBar page={claimsPage} pageSize={claimPage.pageSize} total={claimPage.total} onPageChange={setClaimsPage} loading={loading} /> : null}
-        {tab === 'redemptions' ? <PaginationBar page={redemptionsPage} pageSize={redemptionPage.pageSize} total={redemptionPage.total} onPageChange={setRedemptionsPage} loading={loading} /> : null}
+        {tab === 'usage' ? <PaginationBar page={usagePage} pageSize={logPage.pageSize} total={logPage.total} onPageChange={setUsagePage} loading={loading} t={t} /> : null}
+        {tab === 'claims' ? <PaginationBar page={claimsPage} pageSize={claimPage.pageSize} total={claimPage.total} onPageChange={setClaimsPage} loading={loading} t={t} /> : null}
+        {tab === 'redemptions' ? <PaginationBar page={redemptionsPage} pageSize={redemptionPage.pageSize} total={redemptionPage.total} onPageChange={setRedemptionsPage} loading={loading} t={t} /> : null}
       </section>
     </section>
   );
@@ -7053,42 +7154,105 @@ function PaginationBar({
   pageSize,
   total,
   onPageChange,
-  loading = false
+  loading = false,
+  t,
+  totalLabel
 }: {
   page: number;
   pageSize: number;
   total: number;
   onPageChange: (page: number) => void;
   loading?: boolean;
+  t?: Record<string, string>;
+  totalLabel?: string;
 }) {
   const [pendingDirection, setPendingDirection] = React.useState<'prev' | 'next' | null>(null);
+  const [pendingPage, setPendingPage] = React.useState<number | null>(null);
+  const [jumpPageValue, setJumpPageValue] = React.useState('');
   const wasLoadingRef = React.useRef(false);
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(1, page), pageCount);
+  const quickPageStart = Math.max(1, safePage - 4);
+  const quickPageEnd = Math.min(pageCount, safePage + 5);
+  const quickPages = Array.from({ length: quickPageEnd - quickPageStart + 1 }, (_, index) => quickPageStart + index);
 
   React.useEffect(() => {
     if (wasLoadingRef.current && !loading) {
       setPendingDirection(null);
+      setPendingPage(null);
     }
     wasLoadingRef.current = loading;
   }, [loading]);
 
+  React.useEffect(() => {
+    setJumpPageValue('');
+  }, [page]);
+
   function changePage(nextPage: number, direction: 'prev' | 'next') {
     if (loading) return;
+    const normalizedPage = Math.min(Math.max(1, nextPage), pageCount);
+    if (normalizedPage === safePage) return;
     setPendingDirection(direction);
+    setPendingPage(normalizedPage);
+    onPageChange(normalizedPage);
+  }
+
+  function selectPage(nextPage: number) {
+    if (loading || nextPage === safePage) return;
+    setPendingDirection(null);
+    setPendingPage(nextPage);
     onPageChange(nextPage);
+  }
+
+  function submitJump(event: React.FormEvent) {
+    event.preventDefault();
+    if (loading) return;
+    const nextPage = Math.min(Math.max(1, Math.trunc(Number(jumpPageValue))), pageCount);
+    if (!Number.isFinite(nextPage) || nextPage === safePage) return;
+    selectPage(nextPage);
   }
 
   return (
     <div className="pagination-bar">
-      <span>共 {total} 条</span>
-      <div>
-        <button type="button" className="icon-button compact" onClick={() => changePage(page - 1, 'prev')} disabled={loading || page <= 1}>
+      <span>{totalLabel || tr(t || {}, 'totalItems', '共 {total} 条').replace('{total}', String(total))}</span>
+      <div className="pagination-controls">
+        <button type="button" className="icon-button compact" onClick={() => changePage(safePage - 1, 'prev')} disabled={loading || safePage <= 1} title={tr(t || {}, 'previousPage', '上一页')}>
           {pendingDirection === 'prev' ? <ButtonSpinner size={16} /> : <ChevronLeft size={16} />}
         </button>
-        <strong>{page} / {pageCount}</strong>
-        <button type="button" className="icon-button compact" onClick={() => changePage(page + 1, 'next')} disabled={loading || page >= pageCount}>
+        <strong>{safePage} / {pageCount}</strong>
+        <div className="pagination-page-list" aria-label={tr(t || {}, 'quickPages', '快捷页码')}>
+          {quickPages.map((pageNumber) => (
+            <button
+              key={pageNumber}
+              type="button"
+              className={pageNumber === safePage ? 'pagination-page-button active' : 'pagination-page-button'}
+              onClick={() => selectPage(pageNumber)}
+              disabled={loading || pageNumber === safePage}
+              aria-current={pageNumber === safePage ? 'page' : undefined}
+            >
+              {pendingPage === pageNumber && loading ? <ButtonSpinner size={12} /> : pageNumber}
+            </button>
+          ))}
+        </div>
+        <button type="button" className="icon-button compact" onClick={() => changePage(safePage + 1, 'next')} disabled={loading || safePage >= pageCount} title={tr(t || {}, 'nextPage', '下一页')}>
           {pendingDirection === 'next' ? <ButtonSpinner size={16} /> : <ChevronRight size={16} />}
         </button>
+        <form className="pagination-jump-form" onSubmit={submitJump}>
+          <input
+            type="number"
+            min="1"
+            max={pageCount}
+            step="1"
+            inputMode="numeric"
+            value={jumpPageValue}
+            onChange={(event) => setJumpPageValue(event.target.value)}
+            placeholder={tr(t || {}, 'pageNumber', '页码')}
+            disabled={loading}
+          />
+          <button type="submit" className="secondary-button" disabled={loading || !jumpPageValue.trim()}>
+            {tr(t || {}, 'jumpToPage', '跳转')}
+          </button>
+        </form>
       </div>
     </div>
   );
@@ -7218,7 +7382,7 @@ function UsersCenterPanel({ headers, refreshTick, t, onOpenUser }: { headers: He
             </article>
           ))}
         </div>
-        <PaginationBar page={pageData.page} pageSize={pageData.pageSize} total={pageData.total} onPageChange={setPage} loading={loading} />
+        <PaginationBar page={pageData.page} pageSize={pageData.pageSize} total={pageData.total} onPageChange={setPage} loading={loading} t={t} />
       </section>
     </section>
   );
@@ -7353,9 +7517,9 @@ function UserDetailPanel({ headers, userId, onBack, t }: { headers: HeadersInit;
           {tab === 'logs' ? <LogRows logs={logs.logs} t={t} expandedId={expandedId} setExpandedId={setExpandedId} /> : null}
           {tab === 'claims' ? <OrdersTable orders={claims.orders} /> : null}
           {tab === 'redemptions' ? <GiftRedemptionTable giftCards={redemptions.giftCards} /> : null}
-          {tab === 'logs' ? <PaginationBar page={logs.page} pageSize={logs.pageSize} total={logs.total} onPageChange={(next) => setLogs((value) => ({ ...value, page: next }))} loading={detailLoading} /> : null}
-          {tab === 'claims' ? <PaginationBar page={claims.page} pageSize={claims.pageSize} total={claims.total} onPageChange={(next) => setClaims((value) => ({ ...value, page: next }))} loading={detailLoading} /> : null}
-          {tab === 'redemptions' ? <PaginationBar page={redemptions.page} pageSize={redemptions.pageSize} total={redemptions.total} onPageChange={(next) => setRedemptions((value) => ({ ...value, page: next }))} loading={detailLoading} /> : null}
+          {tab === 'logs' ? <PaginationBar page={logs.page} pageSize={logs.pageSize} total={logs.total} onPageChange={(next) => setLogs((value) => ({ ...value, page: next }))} loading={detailLoading} t={t} /> : null}
+          {tab === 'claims' ? <PaginationBar page={claims.page} pageSize={claims.pageSize} total={claims.total} onPageChange={(next) => setClaims((value) => ({ ...value, page: next }))} loading={detailLoading} t={t} /> : null}
+          {tab === 'redemptions' ? <PaginationBar page={redemptions.page} pageSize={redemptions.pageSize} total={redemptions.total} onPageChange={(next) => setRedemptions((value) => ({ ...value, page: next }))} loading={detailLoading} t={t} /> : null}
       </section>
     </section>
   );
@@ -7787,21 +7951,15 @@ function pct(used: number, limit: number) {
 }
 
 function shortDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(new Date(value));
+  const date = dayjs(value);
+  if (!date.isValid()) return value;
+  return date.format('MM-DD HH:mm');
 }
 
 function fullDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(new Date(value));
+  const date = dayjs(value);
+  if (!date.isValid()) return value;
+  return date.format('YYYY-MM-DD HH:mm:ss');
 }
 
 function Root() {
