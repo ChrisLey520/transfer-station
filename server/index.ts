@@ -86,6 +86,7 @@ const puzzlePieceSize = 44;
 const puzzleTolerancePct = 2.5;
 const ccSwitchUsageAutoIntervalMinutes = 5;
 const upstreamHealthProbeTimeoutMs = Number(process.env.UPSTREAM_HEALTH_PROBE_TIMEOUT_MS || 30_000);
+const upstreamProxyTimeoutMs = Number(process.env.UPSTREAM_PROXY_TIMEOUT_MS || 120_000);
 const claudeHealthProbeModel = process.env.CLAUDE_HEALTH_PROBE_MODEL || 'claude-sonnet-4-6';
 const codexHealthProbeModel = process.env.CODEX_HEALTH_PROBE_MODEL || 'gpt-5.5';
 const healthProbePrompt = 'Reply OK.';
@@ -2569,122 +2570,136 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType)
       }
 
       const upstreamUrl = `${selection.apiUrl}${upstreamPath}`;
-      const upstream = await fetch(upstreamUrl, {
-        method: req.method,
-        headers: buildUpstreamHeaders(req, selection),
-        body: ['GET', 'HEAD'].includes(req.method.toUpperCase()) ? undefined : JSON.stringify(req.body ?? {})
-      });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), upstreamProxyTimeoutMs);
+      const abortUpstream = () => controller.abort();
+      req.on('aborted', abortUpstream);
+      res.on('close', abortUpstream);
 
-      touchUpstreamKey(selection.key.id);
-      const requestId = upstream.headers.get('request-id') || upstream.headers.get('x-request-id') || `up_${crypto.randomUUID()}`;
-      const contentType = upstream.headers.get('content-type') || 'application/json';
-      const requestModel = req.body?.model || 'unknown';
-      const rates = resolveUpstreamRates({ groupId: selection.group.id, agent, model: requestModel });
-      const displayUsageMultiplier = selection.group.displayUsageMultiplier;
+      try {
+        const upstream = await fetch(upstreamUrl, {
+          method: req.method,
+          headers: buildUpstreamHeaders(req, selection),
+          body: ['GET', 'HEAD'].includes(req.method.toUpperCase()) ? undefined : JSON.stringify(req.body ?? {}),
+          signal: controller.signal
+        });
 
-      if (contentType.includes('text/event-stream') && upstream.body) {
+        touchUpstreamKey(selection.key.id);
+        const requestId = upstream.headers.get('request-id') || upstream.headers.get('x-request-id') || `up_${crypto.randomUUID()}`;
+        const contentType = upstream.headers.get('content-type') || 'application/json';
+        const requestModel = req.body?.model || 'unknown';
+        const rates = resolveUpstreamRates({ groupId: selection.group.id, agent, model: requestModel });
+        const displayUsageMultiplier = selection.group.displayUsageMultiplier;
+
+        if (contentType.includes('text/event-stream') && upstream.body) {
+          clearTimeout(timer);
+          touchKey(key.id);
+          res.status(upstream.status);
+          res.setHeader('content-type', contentType);
+          res.setHeader('x-transfer-station-key', key.keyPreview);
+          res.setHeader('x-transfer-station-upstream', 'RelayHub');
+          res.setHeader('x-transfer-station-quota-five-hour-remaining', String(quotaCheck.quota.remainingFiveHour));
+          res.setHeader('x-transfer-station-quota-weekly-remaining', String(quotaCheck.quota.remainingWeekly));
+          await streamSse(upstream, req, res, {
+            key,
+            channelGroupId: selection.group.id,
+            channelNumber: selection.group.channelNumber,
+            model: requestModel,
+            path: req.path,
+            method: req.method,
+            statusCode: upstream.status,
+            startedAt,
+            requestId,
+            rates,
+            displayUsageMultiplier,
+            usageSource: quotaCheck.quota.quotaSource
+          });
+          return;
+        }
+
+        const text = await upstream.text();
+        const payload = parseJsonText(text);
+        const errorMessage = upstreamErrorMessage(payload, upstream.statusText);
+        const responseErrorMessage = !upstream.ok
+          ? errorMessage
+          : hasUpstreamErrorPayload(payload)
+            ? upstreamErrorMessage(payload, 'Upstream response error')
+            : null;
+        const loggedStatusCode = responseErrorMessage && upstream.ok ? 502 : upstream.status;
+
+        if (!upstream.ok && isKeyLevelFailure(upstream.status, errorMessage)) {
+          markUpstreamKeyFailure({
+            keyId: selection.key.id,
+            statusCode: upstream.status,
+            reason: errorMessage,
+            until: recoveryUntilFromUpstream(upstream.headers, payload) || extractResetTime(payload)
+          });
+          lastFailure = { statusCode: upstream.status, message: errorMessage, requestId };
+          continue;
+        }
+
+        if (!upstream.ok && isGroupLevelFailure(upstream.status)) {
+          attemptedGroupIds.add(selection.group.id);
+          markUpstreamGroupFailure({
+            groupId: selection.group.id,
+            statusCode: upstream.status,
+            reason: errorMessage,
+            until: recoveryUntilFromUpstream(upstream.headers, payload)
+          });
+          lastFailure = { statusCode: upstream.status, message: errorMessage, requestId };
+          continue;
+        }
+
+        resetUpstreamKeyFailureState(selection.key.id);
         touchKey(key.id);
         res.status(upstream.status);
         res.setHeader('content-type', contentType);
         res.setHeader('x-transfer-station-key', key.keyPreview);
         res.setHeader('x-transfer-station-upstream', 'RelayHub');
+        res.setHeader('x-transfer-station-usage-multiplier', displayUsageMultiplier.toFixed(2));
         res.setHeader('x-transfer-station-quota-five-hour-remaining', String(quotaCheck.quota.remainingFiveHour));
         res.setHeader('x-transfer-station-quota-weekly-remaining', String(quotaCheck.quota.remainingWeekly));
-        await streamSse(upstream, req, res, {
-          key,
+        const responseBody = contentType.includes('application/json')
+          ? rewriteJsonUsageText(text, displayUsageMultiplier).text
+          : text;
+        res.send(responseBody);
+
+        const loggedModel = req.body?.model || (payload as any)?.model || 'unknown';
+        const tokenUsage = getTokenUsage(
+          payload,
+          resolveUpstreamRates({ groupId: selection.group.id, agent, model: loggedModel }),
+          displayUsageMultiplier
+        );
+        const logUsage = responseErrorMessage ? withoutUsageCost(tokenUsage) : tokenUsage;
+        createUsageLog({
+          apiKeyId: key.id,
           channelGroupId: selection.group.id,
           channelNumber: selection.group.channelNumber,
-          model: requestModel,
+          usageSource: quotaCheck.quota.quotaSource,
+          model: loggedModel,
           path: req.path,
           method: req.method,
-          statusCode: upstream.status,
-          startedAt,
-          requestId,
-          rates,
-          displayUsageMultiplier,
-          usageSource: quotaCheck.quota.quotaSource
+          statusCode: loggedStatusCode,
+          inputTokens: logUsage.inputTokens,
+          outputTokens: logUsage.outputTokens,
+          cacheCreationInputTokens: logUsage.cacheCreationInputTokens,
+          cacheReadInputTokens: logUsage.cacheReadInputTokens,
+          totalTokens: logUsage.totalTokens,
+          inputCostCents: logUsage.inputCostCents,
+          outputCostCents: logUsage.outputCostCents,
+          cacheCreationCostCents: logUsage.cacheCreationCostCents,
+          cacheReadCostCents: logUsage.cacheReadCostCents,
+          totalCostCents: logUsage.totalCostCents,
+          latencyMs: Date.now() - startedAt,
+          errorMessage: responseErrorMessage,
+          requestId
         });
         return;
+      } finally {
+        clearTimeout(timer);
+        req.off('aborted', abortUpstream);
+        res.off('close', abortUpstream);
       }
-
-      const text = await upstream.text();
-      const payload = parseJsonText(text);
-      const errorMessage = upstreamErrorMessage(payload, upstream.statusText);
-      const responseErrorMessage = !upstream.ok
-        ? errorMessage
-        : hasUpstreamErrorPayload(payload)
-          ? upstreamErrorMessage(payload, 'Upstream response error')
-          : null;
-      const loggedStatusCode = responseErrorMessage && upstream.ok ? 502 : upstream.status;
-
-      if (!upstream.ok && isKeyLevelFailure(upstream.status, errorMessage)) {
-        markUpstreamKeyFailure({
-          keyId: selection.key.id,
-          statusCode: upstream.status,
-          reason: errorMessage,
-          until: recoveryUntilFromUpstream(upstream.headers, payload) || extractResetTime(payload)
-        });
-        lastFailure = { statusCode: upstream.status, message: errorMessage, requestId };
-        continue;
-      }
-
-      if (!upstream.ok && isGroupLevelFailure(upstream.status)) {
-        attemptedGroupIds.add(selection.group.id);
-        markUpstreamGroupFailure({
-          groupId: selection.group.id,
-          statusCode: upstream.status,
-          reason: errorMessage,
-          until: recoveryUntilFromUpstream(upstream.headers, payload)
-        });
-        lastFailure = { statusCode: upstream.status, message: errorMessage, requestId };
-        continue;
-      }
-
-      resetUpstreamKeyFailureState(selection.key.id);
-      touchKey(key.id);
-      res.status(upstream.status);
-      res.setHeader('content-type', contentType);
-      res.setHeader('x-transfer-station-key', key.keyPreview);
-      res.setHeader('x-transfer-station-upstream', 'RelayHub');
-      res.setHeader('x-transfer-station-usage-multiplier', displayUsageMultiplier.toFixed(2));
-      res.setHeader('x-transfer-station-quota-five-hour-remaining', String(quotaCheck.quota.remainingFiveHour));
-      res.setHeader('x-transfer-station-quota-weekly-remaining', String(quotaCheck.quota.remainingWeekly));
-      const responseBody = contentType.includes('application/json')
-        ? rewriteJsonUsageText(text, displayUsageMultiplier).text
-        : text;
-      res.send(responseBody);
-
-      const loggedModel = req.body?.model || (payload as any)?.model || 'unknown';
-      const tokenUsage = getTokenUsage(
-        payload,
-        resolveUpstreamRates({ groupId: selection.group.id, agent, model: loggedModel }),
-        displayUsageMultiplier
-      );
-      const logUsage = responseErrorMessage ? withoutUsageCost(tokenUsage) : tokenUsage;
-      createUsageLog({
-        apiKeyId: key.id,
-        channelGroupId: selection.group.id,
-        channelNumber: selection.group.channelNumber,
-        usageSource: quotaCheck.quota.quotaSource,
-        model: loggedModel,
-        path: req.path,
-        method: req.method,
-        statusCode: loggedStatusCode,
-        inputTokens: logUsage.inputTokens,
-        outputTokens: logUsage.outputTokens,
-        cacheCreationInputTokens: logUsage.cacheCreationInputTokens,
-        cacheReadInputTokens: logUsage.cacheReadInputTokens,
-        totalTokens: logUsage.totalTokens,
-        inputCostCents: logUsage.inputCostCents,
-        outputCostCents: logUsage.outputCostCents,
-        cacheCreationCostCents: logUsage.cacheCreationCostCents,
-        cacheReadCostCents: logUsage.cacheReadCostCents,
-        totalCostCents: logUsage.totalCostCents,
-        latencyMs: Date.now() - startedAt,
-        errorMessage: responseErrorMessage,
-        requestId
-      });
-      return;
     }
 
     const message = lastFailure?.message || 'All upstream channels failed';
@@ -2777,37 +2792,43 @@ async function streamSse(
   req.on('aborted', markClientClosed);
   res.on('close', markClientClosed);
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    const chunkText = decoder.decode(value, { stream: true });
-    buffered += chunkText;
+      const chunkText = decoder.decode(value, { stream: true });
+      buffered += chunkText;
 
-    const events = buffered.split('\n\n');
-    buffered = events.pop() || '';
+      const events = buffered.split('\n\n');
+      buffered = events.pop() || '';
 
-    for (const eventText of events) {
-      if (!clientClosed && !res.writableEnded && !res.destroyed) {
-        res.write(`${scaleSseEvent(eventText, displayUsageMultiplier)}\n\n`);
-      }
-      const dataLines = eventText
-        .split('\n')
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.replace(/^data:\s?/, ''));
+      for (const eventText of events) {
+        if (!clientClosed && !res.writableEnded && !res.destroyed) {
+          res.write(`${scaleSseEvent(eventText, displayUsageMultiplier)}\n\n`);
+        }
+        const dataLines = eventText
+          .split('\n')
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.replace(/^data:\s?/, ''));
 
-      for (const dataLine of dataLines) {
-        if (!dataLine || dataLine === '[DONE]') continue;
-        try {
-          const event = JSON.parse(dataLine);
-          finalUsage = mergeStreamingUsage(finalUsage, event);
-          if (event?.type === 'error') {
-            errorMessage = event?.error?.message || 'Streaming error';
+        for (const dataLine of dataLines) {
+          if (!dataLine || dataLine === '[DONE]') continue;
+          try {
+            const event = JSON.parse(dataLine);
+            finalUsage = mergeStreamingUsage(finalUsage, event);
+            if (event?.type === 'error') {
+              errorMessage = event?.error?.message || 'Streaming error';
+            }
+          } catch {
+            // Ignore partial or non-JSON SSE data.
           }
-        } catch {
-          // Ignore partial or non-JSON SSE data.
         }
       }
+    }
+  } catch (error) {
+    if (!clientClosed) {
+      errorMessage = error instanceof Error ? error.message : 'Streaming request failed';
     }
   }
   if (buffered && !clientClosed && !res.writableEnded && !res.destroyed) {

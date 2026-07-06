@@ -49,6 +49,12 @@ const fiveHoursMs = 5 * 60 * 60 * 1000;
 const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
 const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
 const upstreamKeyDegradeMs = 30 * 60 * 1000;
+const usageLogPruneIntervalMs = 60 * 60 * 1000;
+const lastUsedTouchIntervalMs = 60 * 1000;
+
+let lastUsageLogPrunedAt = 0;
+const apiKeyTouchedAt = new Map<string, number>();
+const upstreamKeyTouchedAt = new Map<string, number>();
 
 type LogRange = '24h' | '3d' | '7d' | '30d';
 type LogStatus = 'all' | 'success' | 'failed';
@@ -1361,7 +1367,13 @@ function seedDemoGiftCards() {
 
 export function pruneUsageLogs() {
   const cutoff = new Date(Date.now() - thirtyDaysMs).toISOString();
+  lastUsageLogPrunedAt = Date.now();
   return db.prepare('DELETE FROM usage_logs WHERE created_at < ?').run(cutoff).changes;
+}
+
+function pruneUsageLogsIfDue() {
+  if (Date.now() - lastUsageLogPrunedAt < usageLogPruneIntervalMs) return 0;
+  return pruneUsageLogs();
 }
 
 function normalizeLegacyPlanLimits() {
@@ -3000,6 +3012,10 @@ export function getKeyByRawKey(rawKey: string): KeyWithPlan | null {
 }
 
 export function touchKey(id: string) {
+  const now = Date.now();
+  const lastTouchedAt = apiKeyTouchedAt.get(id) || 0;
+  if (now - lastTouchedAt < lastUsedTouchIntervalMs) return;
+  apiKeyTouchedAt.set(id, now);
   db.prepare('UPDATE api_keys SET last_used_at = ? WHERE id = ?').run(nowIso(), id);
 }
 
@@ -4017,26 +4033,31 @@ export function resetUpstreamKeyFailureState(keyId: string) {
 export { extractResetTime };
 
 export function touchUpstreamKey(id: string) {
+  const now = Date.now();
+  const lastTouchedAt = upstreamKeyTouchedAt.get(id) || 0;
+  if (now - lastTouchedAt < lastUsedTouchIntervalMs) return;
+  upstreamKeyTouchedAt.set(id, now);
   db.prepare('UPDATE upstream_channel_keys SET last_used_at = ?, updated_at = ? WHERE id = ?').run(nowIso(), nowIso(), id);
 }
 
 export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
-  const keyOwner = db.prepare('SELECT user_id FROM api_keys WHERE id = ?').get(apiKeyId) as { user_id: string | null } | undefined;
-  let balanceCents = 0;
-  if (keyOwner?.user_id) {
-    balanceCents = ensureAccountState(keyOwner.user_id).freeCreditCents;
-  }
-
   const key = db
     .prepare(
       `
-      SELECT api_keys.id, plans.five_hour_token_limit, plans.weekly_token_limit
+      SELECT api_keys.id, api_keys.user_id, plans.five_hour_token_limit, plans.weekly_token_limit
       FROM api_keys
       JOIN plans ON plans.id = api_keys.plan_id
       WHERE api_keys.id = ?
     `
     )
-    .get(apiKeyId) as { id: string; five_hour_token_limit: number; weekly_token_limit: number } | undefined;
+    .get(apiKeyId) as
+    | { id: string; user_id: string | null; five_hour_token_limit: number; weekly_token_limit: number }
+    | undefined;
+
+  let balanceCents = 0;
+  if (key?.user_id) {
+    balanceCents = ensureAccountState(key.user_id).freeCreditCents;
+  }
 
   if (!key) {
     return {
@@ -4057,57 +4078,35 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
   const fiveHourSince = new Date(now - fiveHoursMs).toISOString();
   const weeklySince = new Date(now - sevenDaysMs).toISOString();
 
-  const fiveHour = db
+  const usage = db
     .prepare(
       `
-      SELECT COALESCE(SUM(total_cost_cents), 0) as used
+      SELECT
+        COALESCE(SUM(CASE WHEN created_at >= @fiveHourSince THEN total_cost_cents ELSE 0 END), 0) as five_hour_used,
+        COALESCE(SUM(total_cost_cents), 0) as weekly_used,
+        MIN(CASE WHEN created_at >= @fiveHourSince THEN created_at END) as oldest_five_hour,
+        MIN(created_at) as oldest_weekly
       FROM usage_logs
-      WHERE api_key_id = ? AND created_at >= ? AND status_code BETWEEN 200 AND 299
-        AND COALESCE(usage_source, 'plan') = 'plan'
+      WHERE api_key_id = @apiKeyId
+        AND created_at >= @weeklySince
+        AND status_code BETWEEN 200 AND 299
+        AND usage_source = 'plan'
     `
     )
-    .get(apiKeyId, fiveHourSince) as { used: number };
+    .get({ apiKeyId, fiveHourSince, weeklySince }) as {
+    five_hour_used: number;
+    weekly_used: number;
+    oldest_five_hour: string | null;
+    oldest_weekly: string | null;
+  };
 
-  const weekly = db
-    .prepare(
-      `
-      SELECT COALESCE(SUM(total_cost_cents), 0) as used
-      FROM usage_logs
-      WHERE api_key_id = ? AND created_at >= ? AND status_code BETWEEN 200 AND 299
-        AND COALESCE(usage_source, 'plan') = 'plan'
-    `
-    )
-    .get(apiKeyId, weeklySince) as { used: number };
-
-  const oldestFiveHour = db
-    .prepare(
-      `
-      SELECT MIN(created_at) as oldest
-      FROM usage_logs
-      WHERE api_key_id = ? AND created_at >= ? AND status_code BETWEEN 200 AND 299
-        AND COALESCE(usage_source, 'plan') = 'plan'
-    `
-    )
-    .get(apiKeyId, fiveHourSince) as { oldest: string | null };
-
-  const oldestWeekly = db
-    .prepare(
-      `
-      SELECT MIN(created_at) as oldest
-      FROM usage_logs
-      WHERE api_key_id = ? AND created_at >= ? AND status_code BETWEEN 200 AND 299
-        AND COALESCE(usage_source, 'plan') = 'plan'
-    `
-    )
-    .get(apiKeyId, weeklySince) as { oldest: string | null };
-
-  const fiveHourUsed = Number(fiveHour.used ?? 0);
-  const weeklyUsed = Number(weekly.used ?? 0);
-  const fiveHourResetAt = oldestFiveHour.oldest
-    ? new Date(new Date(oldestFiveHour.oldest).getTime() + fiveHoursMs).toISOString()
+  const fiveHourUsed = Number(usage.five_hour_used ?? 0);
+  const weeklyUsed = Number(usage.weekly_used ?? 0);
+  const fiveHourResetAt = usage.oldest_five_hour
+    ? new Date(new Date(usage.oldest_five_hour).getTime() + fiveHoursMs).toISOString()
     : '';
-  const weeklyResetAt = oldestWeekly.oldest
-    ? new Date(new Date(oldestWeekly.oldest).getTime() + sevenDaysMs).toISOString()
+  const weeklyResetAt = usage.oldest_weekly
+    ? new Date(new Date(usage.oldest_weekly).getTime() + sevenDaysMs).toISOString()
     : '';
 
   const remainingFiveHour = Math.max(0, key.five_hour_token_limit - fiveHourUsed);
@@ -4276,12 +4275,12 @@ export function createUsageLog(
     });
   }
 
-  pruneUsageLogs();
+  pruneUsageLogsIfDue();
   return id;
 }
 
 export function listUsageLogs(input: UsageLogQuery = {}) {
-  pruneUsageLogs();
+  pruneUsageLogsIfDue();
 
   const page = Math.max(1, Math.floor(input.page || 1));
   const pageSize = Math.min(Math.max(1, Math.floor(input.pageSize || 20)), 100);
@@ -4340,7 +4339,7 @@ export function listUsageLogs(input: UsageLogQuery = {}) {
 }
 
 export function usageSummaryForUser(userId: string) {
-  pruneUsageLogs();
+  pruneUsageLogsIfDue();
   const now = Date.now();
   const fiveHourSince = new Date(now - fiveHoursMs).toISOString();
   const weeklySince = new Date(now - sevenDaysMs).toISOString();

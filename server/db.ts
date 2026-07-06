@@ -294,6 +294,7 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions(token_hash);
     CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_usage_api_key_created_at ON usage_logs(api_key_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_usage_quota_window ON usage_logs(api_key_id, usage_source, created_at, status_code);
     CREATE INDEX IF NOT EXISTS idx_usage_created_at ON usage_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_gift_cards_redeemed_at ON gift_cards(redeemed_at);
     CREATE INDEX IF NOT EXISTS idx_product_links_item ON product_links(item_type, item_id);
