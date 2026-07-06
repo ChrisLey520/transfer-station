@@ -15,10 +15,15 @@ import {
   upsertUpstreamModelRate
 } from '../store.js';
 
+const optionalUrlSchema = z.preprocess(
+  (value) => (typeof value === 'string' ? value.trim() : value),
+  z.union([z.string().url(), z.literal('')]).optional()
+);
+
 const upstreamChannelSchema = z.object({
   id: z.string().min(1).optional(),
   name: z.string().min(1),
-  websiteUrl: z.string().url(),
+  websiteUrl: optionalUrlSchema,
   status: z.enum(['active', 'paused', 'banned']).optional(),
   claudeApiUrl: z.string().url(),
   codexApiUrl: z.string().url(),

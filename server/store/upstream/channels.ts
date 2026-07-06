@@ -80,10 +80,6 @@ export function upsertUpstreamChannel(input: UpstreamChannelInput) {
     throw new Error('渠道名称不能为空。');
   }
 
-  if (!next.websiteUrl) {
-    throw new Error('官网地址不能为空。');
-  }
-
   if (!next.claudeApiUrl || !next.codexApiUrl) {
     throw new Error('Claude Code 与 Codex 的 API URL 均不能为空。');
   }
@@ -390,4 +386,3 @@ export function cloneUpstreamChannel(id: string, options: { includeKeys?: boolea
   invalidateUpstreamSelectionCache();
   return channel;
 }
-

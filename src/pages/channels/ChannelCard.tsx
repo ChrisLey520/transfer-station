@@ -112,9 +112,13 @@ export function ChannelCard({
       <div className="channel-url-grid">
         <div>
           <span>{tr(t, 'officialWebsite', '官网地址')}</span>
-          <a href={channel.websiteUrl} target="_blank" rel="noreferrer noopener">
-            <code>{channel.websiteUrl}</code>
-          </a>
+          {channel.websiteUrl ? (
+            <a href={channel.websiteUrl} target="_blank" rel="noreferrer noopener">
+              <code>{channel.websiteUrl}</code>
+            </a>
+          ) : (
+            <code>{tr(t, 'notFilled', '未填写')}</code>
+          )}
         </div>
         <div>
           <span>{selectedAgentTab === 'claude-code' ? 'Claude Code' : 'Codex'}</span>

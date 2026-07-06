@@ -24,6 +24,7 @@ export async function persistChannel(channelForm: ChannelFormState, headers: Hea
     headers,
     body: JSON.stringify({
       name: channelForm.name,
+      websiteUrl: channelForm.websiteUrl,
       status: channelForm.status,
       claudeApiUrl: channelForm.claudeApiUrl,
       codexApiUrl: channelForm.codexApiUrl,

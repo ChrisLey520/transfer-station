@@ -42,7 +42,6 @@ export function ChannelEditorModal({
               value={channelForm.websiteUrl}
               onChange={(event) => setChannelForm((value) => ({ ...value, websiteUrl: event.target.value }))}
               placeholder="https://example.com"
-              required
             />
           </label>
           <label>
