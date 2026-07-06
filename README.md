@@ -65,6 +65,34 @@ TAOBAO_TOP_ENDPOINT=https://eco.taobao.com/router/rest
 TAOBAO_TOKEN_ENDPOINT=https://oauth.taobao.com/token
 ```
 
+## Production Deploy
+
+生产启动默认只执行数据库结构初始化，不会自动写入默认套餐、默认管理员、默认渠道，也不会在启动时回填历史 usage cost。新环境首次部署后，需要显式跑一次种子数据：
+
+```bash
+pnpm run build
+pnpm run seed:prod
+pnpm run start
+```
+
+也可以只在首次启动或一次性迁移时临时开启：
+
+```bash
+SEED_ON_START=1 pnpm run start
+```
+
+k3s 部署脚本默认不跑 seed。新集群首次部署或需要同步默认数据时执行：
+
+```bash
+DEPLOY_RUN_SEED=1 pnpm run deploy:k3s
+```
+
+普通滚动发布继续使用：
+
+```bash
+pnpm run deploy:k3s
+```
+
 ## Taobao Auto Gift Codes
 
 淘宝优先使用 TMC 消息通知触发发码，不依赖定时扫描订单。基本流程：

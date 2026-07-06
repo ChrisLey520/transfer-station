@@ -18,11 +18,12 @@
     "dev:server": "tsx watch server/index.ts",
     "dev:taobao-worker": "tsx watch server/taobao-worker.ts",
     "dev:web": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && tsc -p tsconfig.server.json && vite build",
     "deploy:k3s": "bash scripts/deploy-k3s.sh",
-    "start": "NODE_ENV=production tsx server/index.ts",
-    "start:taobao-worker": "NODE_ENV=production tsx server/taobao-worker.ts",
+    "start": "NODE_ENV=production node dist/server/index.js",
+    "start:taobao-worker": "NODE_ENV=production node dist/server/taobao-worker.js",
     "seed": "tsx server/seed.ts",
+    "seed:prod": "NODE_ENV=production node dist/server/seed.js",
     "simulate:codex-billing": "node scripts/simulate-codex-billing.mjs"
   },
   "keywords": [
@@ -34,27 +35,27 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@floating-ui/react": "^0.27.19",
-    "@vitejs/plugin-react": "^5.0.0",
     "cors": "^2.8.5",
-    "dayjs": "^1.11.21",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
-    "lucide-react": "^0.562.0",
     "nanoid": "^5.1.6",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
-    "typescript": "^5.9.3",
-    "vite": "^7.3.0",
     "zod": "^4.2.1"
   },
   "devDependencies": {
+    "@floating-ui/react": "^0.27.19",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^25.0.3",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.0.0",
     "concurrently": "^9.2.1",
-    "tsx": "^4.21.0"
+    "dayjs": "^1.11.21",
+    "lucide-react": "^0.562.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.0"
   }
 }

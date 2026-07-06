@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 
 const topEndpoint = process.env.TAOBAO_TOP_ENDPOINT || 'https://eco.taobao.com/router/rest';
 const tokenEndpoint = process.env.TAOBAO_TOKEN_ENDPOINT || 'https://oauth.taobao.com/token';
+const taobaoApiTimeoutMs = Math.max(1_000, Number(process.env.TAOBAO_API_TIMEOUT_MS || 15_000));
 
 type TopOptions = {
   session?: string;
@@ -61,6 +62,26 @@ function normalizeTopPayload(payload: unknown) {
   return payload;
 }
 
+async function postForm(endpoint: string, body: URLSearchParams) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), taobaoApiTimeoutMs);
+  try {
+    return await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded;charset=utf-8' },
+      body,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`淘宝接口请求超时（${taobaoApiTimeoutMs}ms）。`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function callTaobaoTop<T = any>(method: string, options: TopOptions = {}): Promise<T> {
   const config = getTaobaoConfig();
   const params: Record<string, string> = {
@@ -78,11 +99,7 @@ export async function callTaobaoTop<T = any>(method: string, options: TopOptions
   params.sign = signTopParams(params, config.appSecret);
 
   const body = new URLSearchParams(params);
-  const response = await fetch(topEndpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded;charset=utf-8' },
-    body
-  });
+  const response = await postForm(topEndpoint, body);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(`淘宝接口 HTTP ${response.status}`);
@@ -99,11 +116,7 @@ export async function exchangeTaobaoAuthCode(code: string, redirectUri?: string)
     client_secret: config.appSecret
   });
   if (redirectUri) body.set('redirect_uri', redirectUri);
-  const response = await fetch(tokenEndpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded;charset=utf-8' },
-    body
-  });
+  const response = await postForm(tokenEndpoint, body);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || (payload && typeof payload === 'object' && 'error' in payload)) {
     throw new Error(String((payload as any).error_description || (payload as any).error || '淘宝授权失败。'));

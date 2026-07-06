@@ -91,14 +91,18 @@ spec:
           image: relayhub:latest
           imagePullPolicy: IfNotPresent
           command:
-            - ./node_modules/.bin/tsx
+            - node
           args:
-            - server/taobao-worker.ts
+            - dist/server/taobao-worker.js
           env:
             - name: NODE_ENV
               value: production
             - name: DATABASE_PATH
               value: /app/data/transfer-station.sqlite
+            - name: TAOBAO_TMC_CONCURRENCY
+              value: "4"
+            - name: TAOBAO_API_TIMEOUT_MS
+              value: "15000"
           envFrom:
             - secretRef:
                 name: relayhub-env

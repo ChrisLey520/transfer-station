@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import crypto from 'node:crypto';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
@@ -92,6 +93,9 @@ const claudeHealthProbeModel = process.env.CLAUDE_HEALTH_PROBE_MODEL || 'claude-
 const codexHealthProbeModel = process.env.CODEX_HEALTH_PROBE_MODEL || 'gpt-5.5';
 const healthProbePrompt = 'Reply OK.';
 const healthProbeMaxOutputTokens = 8;
+const seedOnStart = process.env.SEED_ON_START === '1' || (process.env.NODE_ENV !== 'production' && process.env.SEED_ON_START !== '0');
+const pruneUsageLogsOnStart = process.env.PRUNE_USAGE_LOGS_ON_START === '1';
+const rateBucketCleanupIntervalMs = Math.max(10_000, Number(process.env.RATE_BUCKET_CLEANUP_INTERVAL_MS || 60_000));
 
 type AuthPurpose = 'login' | 'register';
 
@@ -109,6 +113,7 @@ type SliderTokenRecord = {
 const sliderChallenges = new Map<string, SliderChallengeRecord>();
 const sliderTokens = new Map<string, SliderTokenRecord>();
 const rateBuckets = new Map<string, number[]>();
+let maxRateBucketWindowMs = 0;
 
 const pngCrcTable = (() => {
   const table = new Uint32Array(256);
@@ -123,8 +128,12 @@ const pngCrcTable = (() => {
 })();
 
 initDb();
-seedDefaults();
-pruneUsageLogs();
+if (seedOnStart) {
+  seedDefaults();
+}
+if (pruneUsageLogsOnStart) {
+  pruneUsageLogs();
+}
 
 app.use(cors());
 app.use(express.json({ limit: '12mb' }));
@@ -139,6 +148,7 @@ function getClientFingerprint(req: Request) {
 }
 
 function slidingWindowGuard(bucket: string, limit: number, windowMs: number) {
+  maxRateBucketWindowMs = Math.max(maxRateBucketWindowMs, windowMs);
   return (req: Request, res: Response, next: NextFunction) => {
     const now = Date.now();
     const key = `${bucket}:${getClientFingerprint(req)}`;
@@ -153,6 +163,19 @@ function slidingWindowGuard(bucket: string, limit: number, windowMs: number) {
     next();
   };
 }
+
+setInterval(() => {
+  const now = Date.now();
+  const maxWindowMs = maxRateBucketWindowMs || 10 * 60_000;
+  for (const [key, hits] of rateBuckets.entries()) {
+    const activeHits = hits.filter((timestamp) => now - timestamp < maxWindowMs);
+    if (activeHits.length) {
+      rateBuckets.set(key, activeHits);
+    } else {
+      rateBuckets.delete(key);
+    }
+  }
+}, rateBucketCleanupIntervalMs).unref();
 
 function clampChannel(value: number) {
   return Math.max(0, Math.min(255, Math.round(value)));
@@ -2863,7 +2886,9 @@ async function streamSse(
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const clientDist = path.resolve(__dirname, '../dist/client');
+const clientDist =
+  [path.resolve(__dirname, '../client'), path.resolve(__dirname, '../dist/client')].find((candidate) => existsSync(candidate)) ||
+  path.resolve(__dirname, '../client');
 
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(clientDist));

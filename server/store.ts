@@ -54,10 +54,12 @@ const usageLogPruneIntervalMs = 60 * 60 * 1000;
 const lastUsedTouchIntervalMs = 60 * 1000;
 const upstreamSelectionCacheTtlMs = 10 * 1000;
 const upstreamRawKeyCacheTtlMs = 5 * 60 * 1000;
+const usageSummaryCacheTtlMs = Math.max(0, Number(process.env.USAGE_SUMMARY_CACHE_TTL_MS || 5_000));
 
 let lastUsageLogPrunedAt = 0;
 const apiKeyTouchedAt = new Map<string, number>();
 const upstreamKeyTouchedAt = new Map<string, number>();
+const usageSummaryCache = new Map<string, { expiresAt: number; summary: any }>();
 const upstreamSelectionCache = new Map<AgentType, { expiresAt: number; selections: UpstreamSelectionCandidate[] }>();
 const upstreamRawKeyCache = new Map<
   string,
@@ -4461,6 +4463,23 @@ export function listUsageLogs(input: UsageLogQuery = {}) {
 }
 
 export function usageSummaryForUser(userId: string) {
+  if (usageSummaryCacheTtlMs > 0) {
+    const now = Date.now();
+    const cached = usageSummaryCache.get(userId);
+    if (cached && cached.expiresAt > now) return cached.summary;
+
+    const summary = buildUsageSummaryForUser(userId);
+    usageSummaryCache.set(userId, {
+      expiresAt: now + usageSummaryCacheTtlMs,
+      summary
+    });
+    return summary;
+  }
+
+  return buildUsageSummaryForUser(userId);
+}
+
+function buildUsageSummaryForUser(userId: string) {
   pruneUsageLogsIfDue();
   const now = Date.now();
   const fiveHourSince = new Date(now - fiveHoursMs).toISOString();
