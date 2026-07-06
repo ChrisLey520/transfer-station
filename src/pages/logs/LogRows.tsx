@@ -25,6 +25,7 @@ export function LogRows({
       {!compactMode ? (
         <div className="log-head" aria-hidden="true">
           <span>{t.model}</span>
+          <span>{tr(t, 'keyName', '密钥名称')}</span>
           <span>{tr(t, 'channelNumber', '渠道编号')}</span>
           <span>{t.costUsage}</span>
           <span>{t.status}</span>
@@ -46,6 +47,7 @@ export function LogRows({
               <div>
                 <strong>{log.model}</strong>
               </div>
+              <span>{log.apiKeyName || '-'}</span>
               <span>{log.channelNumber ? `#${log.channelNumber}` : '-'}</span>
               <span className="log-cost">{currency(log.totalCostCents, 'USD')}</span>
               <span className={isSuccess ? 'status-code ok' : 'status-code error'}>{isSuccess ? t.success : t.failed}</span>
