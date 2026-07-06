@@ -119,6 +119,7 @@ type AnnouncementWithVisibility = Announcement & {
 type UpstreamChannelInput = {
   id?: string;
   name: string;
+  websiteUrl?: string;
   status?: UpstreamChannelGroup['status'];
   claudeApiUrl: string;
   codexApiUrl: string;
@@ -439,6 +440,7 @@ function seedDefaultUpstreamChannels() {
       INSERT INTO upstream_channel_groups (
         id,
         name,
+        website_url,
         status,
         claude_api_url,
         codex_api_url,
@@ -459,6 +461,7 @@ function seedDefaultUpstreamChannels() {
       VALUES (
         @id,
         @name,
+        @websiteUrl,
         'active',
         @claudeApiUrl,
         @codexApiUrl,
@@ -480,6 +483,7 @@ function seedDefaultUpstreamChannels() {
     ).run({
       id: 'freemodel',
       name: 'FreeModel',
+      websiteUrl: 'https://freemodel.dev',
       claudeApiUrl: 'https://api-cc.freemodel.dev',
       codexApiUrl: 'https://vip-sg.freemodel.dev',
       createdAt: timestamp,
@@ -490,7 +494,7 @@ function seedDefaultUpstreamChannels() {
   defaultUpstreamKeys.forEach((key, index) => {
     const keyHash = hashKey(key);
     const defaultName = `FreeModel #${index + 1}`;
-    const existingKey = db.prepare('SELECT id, name FROM upstream_channel_keys WHERE key_hash = ?').get(keyHash) as
+    const existingKey = db.prepare('SELECT id, name FROM upstream_channel_keys WHERE channel_group_id = ? AND key_hash = ?').get('freemodel', keyHash) as
       | { id: string; name: string | null }
       | undefined;
     if (existingKey) {
@@ -3003,6 +3007,10 @@ function normalizeUpstreamUrl(value: string) {
   return value.trim().replace(/\/+$/, '');
 }
 
+function normalizeOptionalUpstreamUrl(value: string) {
+  return normalizeUpstreamUrl(value);
+}
+
 function normalizeUpstreamStatus(value: unknown): UpstreamChannelGroup['status'] {
   if (value === 'banned') return 'banned';
   return value === 'paused' ? 'paused' : 'active';
@@ -3250,6 +3258,7 @@ export function upsertUpstreamChannel(input: UpstreamChannelInput) {
     id,
     channelNumber: Number(current?.channel_number ?? 0) || nextChannelNumber(),
     name: input.name.trim(),
+    websiteUrl: normalizeOptionalUpstreamUrl(input.websiteUrl ?? current?.website_url ?? ''),
     status: normalizeUpstreamStatus(input.status ?? current?.status),
     claudeApiUrl: normalizeUpstreamUrl(input.claudeApiUrl),
     codexApiUrl: normalizeUpstreamUrl(input.codexApiUrl),
@@ -3278,6 +3287,10 @@ export function upsertUpstreamChannel(input: UpstreamChannelInput) {
     throw new Error('渠道名称不能为空。');
   }
 
+  if (!next.websiteUrl) {
+    throw new Error('官网地址不能为空。');
+  }
+
   if (!next.claudeApiUrl || !next.codexApiUrl) {
     throw new Error('Claude Code 与 Codex 的 API URL 均不能为空。');
   }
@@ -3288,6 +3301,7 @@ export function upsertUpstreamChannel(input: UpstreamChannelInput) {
       id,
       channel_number,
       name,
+      website_url,
       status,
       claude_api_url,
       codex_api_url,
@@ -3309,6 +3323,7 @@ export function upsertUpstreamChannel(input: UpstreamChannelInput) {
       @id,
       @channelNumber,
       @name,
+      @websiteUrl,
       @status,
       @claudeApiUrl,
       @codexApiUrl,
@@ -3329,6 +3344,7 @@ export function upsertUpstreamChannel(input: UpstreamChannelInput) {
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       channel_number = excluded.channel_number,
+      website_url = excluded.website_url,
       status = excluded.status,
       claude_api_url = excluded.claude_api_url,
       codex_api_url = excluded.codex_api_url,
@@ -3383,6 +3399,200 @@ export function deleteUpstreamChannel(id: string) {
   return existing;
 }
 
+export function cloneUpstreamChannel(id: string, options: { includeKeys?: boolean } = {}) {
+  const source = db.prepare('SELECT * FROM upstream_channel_groups WHERE id = ?').get(id) as any;
+  if (!source) return null;
+
+  const newId = makeId();
+  const timestamp = nowIso();
+  const includeKeys = Boolean(options.includeKeys);
+
+  const clone = db.transaction(() => {
+    db.prepare(
+      `
+      INSERT INTO upstream_channel_groups (
+        id,
+        channel_number,
+        name,
+        website_url,
+        status,
+        claude_api_url,
+        codex_api_url,
+        use_independent_agent_keys,
+        input_rate_per_million,
+        output_rate_per_million,
+        cache_creation_rate_per_million,
+        cache_read_rate_per_million,
+        server_error_recovery_minutes,
+        display_usage_multiplier,
+        sort_order,
+        degraded_until,
+        degraded_reason,
+        degraded_status_code,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        @id,
+        @channelNumber,
+        @name,
+        @websiteUrl,
+        @status,
+        @claudeApiUrl,
+        @codexApiUrl,
+        @useIndependentAgentKeys,
+        @inputRatePerMillion,
+        @outputRatePerMillion,
+        @cacheCreationRatePerMillion,
+        @cacheReadRatePerMillion,
+        @serverErrorRecoveryMinutes,
+        @displayUsageMultiplier,
+        @sortOrder,
+        NULL,
+        NULL,
+        NULL,
+        @createdAt,
+        @updatedAt
+      )
+    `
+    ).run({
+      id: newId,
+      channelNumber: nextChannelNumber(),
+      name: `${source.name} 副本`,
+      websiteUrl: source.website_url ?? '',
+      status: normalizeUpstreamStatus(source.status),
+      claudeApiUrl: source.claude_api_url,
+      codexApiUrl: source.codex_api_url,
+      useIndependentAgentKeys: Number(source.use_independent_agent_keys ?? 0),
+      inputRatePerMillion: Number(source.input_rate_per_million ?? 3),
+      outputRatePerMillion: Number(source.output_rate_per_million ?? 15),
+      cacheCreationRatePerMillion: Number(source.cache_creation_rate_per_million ?? 3.75),
+      cacheReadRatePerMillion: Number(source.cache_read_rate_per_million ?? 0.3),
+      serverErrorRecoveryMinutes: recoveryMinutes(source.server_error_recovery_minutes, 10),
+      displayUsageMultiplier: usageMultiplier(source.display_usage_multiplier, 2),
+      sortOrder: normalizeChannelPriority(source.sort_order, 100),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    const modelRates = db.prepare('SELECT * FROM upstream_model_rates WHERE channel_group_id = ? ORDER BY sort_order ASC, created_at ASC').all(id) as any[];
+    const insertRate = db.prepare(
+      `
+      INSERT INTO upstream_model_rates (
+        id,
+        channel_group_id,
+        agent_type,
+        model,
+        input_rate_per_million,
+        output_rate_per_million,
+        cache_creation_rate_per_million,
+        cache_read_rate_per_million,
+        is_default,
+        sort_order,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        @id,
+        @channelGroupId,
+        @agentType,
+        @model,
+        @inputRatePerMillion,
+        @outputRatePerMillion,
+        @cacheCreationRatePerMillion,
+        @cacheReadRatePerMillion,
+        @isDefault,
+        @sortOrder,
+        @createdAt,
+        @updatedAt
+      )
+    `
+    );
+
+    for (const rate of modelRates) {
+      insertRate.run({
+        id: makeId(),
+        channelGroupId: newId,
+        agentType: rate.agent_type,
+        model: rate.model,
+        inputRatePerMillion: Number(rate.input_rate_per_million ?? 0),
+        outputRatePerMillion: Number(rate.output_rate_per_million ?? 0),
+        cacheCreationRatePerMillion: Number(rate.cache_creation_rate_per_million ?? 0),
+        cacheReadRatePerMillion: Number(rate.cache_read_rate_per_million ?? 0),
+        isDefault: Number(rate.is_default ?? 0),
+        sortOrder: Number(rate.sort_order ?? 100),
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+    }
+
+    if (includeKeys) {
+      const keys = db.prepare('SELECT * FROM upstream_channel_keys WHERE channel_group_id = ? ORDER BY sort_order ASC, created_at ASC').all(id) as any[];
+      const insertKey = db.prepare(
+        `
+        INSERT INTO upstream_channel_keys (
+          id,
+          channel_group_id,
+          name,
+          agent_type,
+          key_hash,
+          key_preview,
+          key_ciphertext,
+          status,
+          sort_order,
+          expires_at,
+          exhausted_until,
+          failure_reason,
+          failure_status_code,
+          last_used_at,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          @id,
+          @channelGroupId,
+          @name,
+          @agentType,
+          @keyHash,
+          @keyPreview,
+          @keyCiphertext,
+          @status,
+          @sortOrder,
+          @expiresAt,
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          @createdAt,
+          @updatedAt
+        )
+      `
+      );
+
+      for (const key of keys) {
+        insertKey.run({
+          id: makeId(),
+          channelGroupId: newId,
+          name: key.name ?? '',
+          agentType: key.agent_type,
+          keyHash: key.key_hash,
+          keyPreview: key.key_preview,
+          keyCiphertext: key.key_ciphertext,
+          status: normalizeUpstreamKeyStatus(key.status),
+          sortOrder: Number(key.sort_order ?? 100),
+          expiresAt: key.expires_at ?? null,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        });
+      }
+    }
+
+    return getUpstreamChannel(newId)!;
+  });
+
+  return clone();
+}
+
 export function addUpstreamChannelKey(groupId: string, input: UpstreamChannelKeyInput) {
   const group = getUpstreamChannel(groupId);
   if (!group) return null;
@@ -3394,9 +3604,9 @@ export function addUpstreamChannelKey(groupId: string, input: UpstreamChannelKey
 
   const timestamp = nowIso();
   const keyHash = hashKey(rawKey);
-  const existing = db.prepare('SELECT id FROM upstream_channel_keys WHERE key_hash = ?').get(keyHash);
+  const existing = db.prepare('SELECT id FROM upstream_channel_keys WHERE channel_group_id = ? AND key_hash = ?').get(groupId, keyHash);
   if (existing) {
-    throw new Error('该上游 API Key 已存在。');
+    throw new Error('该渠道内已存在这个上游 API Key。');
   }
 
   db.prepare(
@@ -3490,10 +3700,10 @@ export function updateUpstreamChannelKey(
   if (keyUpdate) {
     const nextHash = hashKey(keyUpdate);
     const existing = db
-      .prepare('SELECT id FROM upstream_channel_keys WHERE key_hash = ? AND id != ?')
-      .get(nextHash, keyId);
+      .prepare('SELECT id FROM upstream_channel_keys WHERE channel_group_id = ? AND key_hash = ? AND id != ?')
+      .get(groupId, nextHash, keyId);
     if (existing) {
-      throw new Error('该上游 API Key 已存在。');
+      throw new Error('该渠道内已存在这个上游 API Key。');
     }
     next.keyHash = nextHash;
     next.keyPreview = previewKey(keyUpdate);

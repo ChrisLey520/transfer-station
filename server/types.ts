@@ -89,6 +89,7 @@ export type UpstreamChannelGroup = {
   id: string;
   channelNumber: number;
   name: string;
+  websiteUrl: string;
   status: 'active' | 'paused' | 'banned';
   claudeApiUrl: string;
   codexApiUrl: string;

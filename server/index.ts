@@ -10,6 +10,7 @@ import {
   addUpstreamChannelKey,
   assertQuota,
   claimTaobaoOrderGiftCards,
+  cloneUpstreamChannel,
   createKey,
   createGiftCards,
   createUsageLog,
@@ -1837,6 +1838,7 @@ app.patch('/api/gift-cards/:code/revoke', adminGuard, (req, res) => {
 const upstreamChannelSchema = z.object({
   id: z.string().min(1).optional(),
   name: z.string().min(1),
+  websiteUrl: z.string().url(),
   status: z.enum(['active', 'paused', 'banned']).optional(),
   claudeApiUrl: z.string().url(),
   codexApiUrl: z.string().url(),
@@ -1852,6 +1854,10 @@ const upstreamChannelSchema = z.object({
 
 const upstreamChannelStatusSchema = z.object({
   status: z.enum(['active', 'paused', 'banned'])
+});
+
+const upstreamChannelCloneSchema = z.object({
+  includeKeys: z.boolean().optional()
 });
 
 const upstreamKeySchema = z.object({
@@ -1890,6 +1896,25 @@ app.post('/api/upstream-channels', adminGuard, (req, res) => {
     res.status(parsed.data.id ? 200 : 201).json({ channel, channels: listUpstreamChannels() });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to save upstream channel' });
+  }
+});
+
+app.post('/api/upstream-channels/:id/clone', adminGuard, (req, res) => {
+  const parsed = upstreamChannelCloneSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const channel = cloneUpstreamChannel(routeParam(req.params.id), { includeKeys: parsed.data.includeKeys });
+    if (!channel) {
+      res.status(404).json({ error: 'Channel not found' });
+      return;
+    }
+    res.status(201).json({ channel, channels: listUpstreamChannels() });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to clone upstream channel' });
   }
 });
 
