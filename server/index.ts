@@ -40,9 +40,10 @@ import {
   listTaobaoProductMappings,
   listTaobaoShops,
   listUpstreamChannels,
-  listUpstreamSelections,
+  listUpstreamSelectionCandidates,
   listUsageLogs,
   extractResetTime,
+  materializeUpstreamSelection,
   markUpstreamGroupFailure,
   markUpstreamKeyFailure,
   previewGiftCard,
@@ -905,7 +906,7 @@ function extractHealthProbeReply(agent: AgentType, payload: unknown) {
 async function probeKeyHealth(key: KeyWithPlan, agent: AgentType) {
   const startedAt = Date.now();
   const quotaCheck = assertQuota(key);
-  const selections = listUpstreamSelections(agent);
+  const candidates = listUpstreamSelectionCandidates(agent);
   const spec = healthProbeSpec(agent);
   const attempts: Array<{
     upstream: string;
@@ -917,7 +918,7 @@ async function probeKeyHealth(key: KeyWithPlan, agent: AgentType) {
     requestId: string | null;
   }> = [];
 
-  if (!selections.length) {
+  if (!candidates.length) {
     return {
       ok: false,
       status: 'configuration_error',
@@ -968,7 +969,10 @@ async function probeKeyHealth(key: KeyWithPlan, agent: AgentType) {
     };
   }
 
-  for (const selection of selections) {
+  for (const candidate of candidates) {
+    const selection = materializeUpstreamSelection(candidate);
+    if (!selection) continue;
+
     const attemptStartedAt = Date.now();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), upstreamHealthProbeTimeoutMs);
@@ -2535,8 +2539,8 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType)
     return;
   }
 
-  const selections = listUpstreamSelections(agent);
-  if (!selections.length) {
+  const candidates = listUpstreamSelectionCandidates(agent);
+  if (!candidates.length) {
     writeProxyLog({
       key,
       model: req.body?.model || 'unknown',
@@ -2564,10 +2568,13 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType)
   } | null = null;
   const attemptedGroupIds = new Set<string>();
   try {
-    for (const selection of selections) {
-      if (attemptedGroupIds.has(selection.group.id) && isGroupLevelFailure(lastFailure?.statusCode || 0)) {
+    for (const candidate of candidates) {
+      if (attemptedGroupIds.has(candidate.group.id) && isGroupLevelFailure(lastFailure?.statusCode || 0)) {
         continue;
       }
+
+      const selection = materializeUpstreamSelection(candidate);
+      if (!selection) continue;
 
       const upstreamUrl = `${selection.apiUrl}${upstreamPath}`;
       const controller = new AbortController();
@@ -2650,7 +2657,9 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType)
           continue;
         }
 
-        resetUpstreamKeyFailureState(selection.key.id);
+        if (selection.key.exhaustedUntil || selection.key.failureReason || selection.key.failureStatusCode !== null) {
+          resetUpstreamKeyFailureState(selection.key.id);
+        }
         touchKey(key.id);
         res.status(upstream.status);
         res.setHeader('content-type', contentType);

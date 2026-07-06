@@ -158,6 +158,8 @@ export type UpstreamSelection = {
   apiUrl: string;
 };
 
+export type UpstreamSelectionCandidate = Omit<UpstreamSelection, 'rawKey'>;
+
 export type QuotaSnapshot = {
   fiveHourUsed: number;
   fiveHourLimit: number;

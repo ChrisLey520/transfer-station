@@ -38,6 +38,7 @@ import type {
   UpstreamModelRate,
   UpstreamKeyAgentType,
   UpstreamSelection,
+  UpstreamSelectionCandidate,
   User,
   UserRole,
   UsageLog
@@ -51,10 +52,17 @@ const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
 const upstreamKeyDegradeMs = 30 * 60 * 1000;
 const usageLogPruneIntervalMs = 60 * 60 * 1000;
 const lastUsedTouchIntervalMs = 60 * 1000;
+const upstreamSelectionCacheTtlMs = 10 * 1000;
+const upstreamRawKeyCacheTtlMs = 5 * 60 * 1000;
 
 let lastUsageLogPrunedAt = 0;
 const apiKeyTouchedAt = new Map<string, number>();
 const upstreamKeyTouchedAt = new Map<string, number>();
+const upstreamSelectionCache = new Map<AgentType, { expiresAt: number; selections: UpstreamSelectionCandidate[] }>();
+const upstreamRawKeyCache = new Map<
+  string,
+  { ciphertext: string; updatedAt: string; rawKey: string; expiresAt: number }
+>();
 
 type LogRange = '24h' | '3d' | '7d' | '30d';
 type LogStatus = 'all' | 'success' | 'failed';
@@ -3135,9 +3143,14 @@ function normalizeUpstreamKeyExpiry(value: unknown) {
   return new Date(timestamp).toISOString();
 }
 
+function invalidateUpstreamSelectionCache() {
+  upstreamSelectionCache.clear();
+  upstreamRawKeyCache.clear();
+}
+
 function clearExpiredUpstreamDegradations() {
   const timestamp = nowIso();
-  db.prepare(
+  const groupResult = db.prepare(
     `
     UPDATE upstream_channel_groups
     SET degraded_until = NULL,
@@ -3148,7 +3161,7 @@ function clearExpiredUpstreamDegradations() {
   `
   ).run({ now: timestamp, updatedAt: timestamp });
 
-  db.prepare(
+  const keyResult = db.prepare(
     `
     UPDATE upstream_channel_keys
     SET exhausted_until = NULL,
@@ -3158,6 +3171,10 @@ function clearExpiredUpstreamDegradations() {
     WHERE exhausted_until IS NOT NULL AND exhausted_until <= @now
   `
   ).run({ now: timestamp, updatedAt: timestamp });
+
+  if (groupResult.changes > 0 || keyResult.changes > 0) {
+    invalidateUpstreamSelectionCache();
+  }
 }
 
 function publicUpstreamKey(key: UpstreamChannelKey) {
@@ -3263,7 +3280,7 @@ export function getUpstreamChannel(id: string): UpstreamChannelGroupListItem | n
 }
 
 export function hasAvailableUpstreamChannels(agent: AgentType = 'claude-code') {
-  return listUpstreamSelections(agent).length > 0;
+  return listUpstreamSelectionCandidates(agent).length > 0;
 }
 
 export function upsertUpstreamChannel(input: UpstreamChannelInput) {
@@ -3379,6 +3396,7 @@ export function upsertUpstreamChannel(input: UpstreamChannelInput) {
     useIndependentAgentKeys: next.useIndependentAgentKeys ? 1 : 0
   });
 
+  invalidateUpstreamSelectionCache();
   return getUpstreamChannel(id)!;
 }
 
@@ -3400,6 +3418,7 @@ export function updateUpstreamChannelStatus(id: string, statusInput: UpstreamCha
   `
   ).run({ id, status, updatedAt: timestamp });
 
+  invalidateUpstreamSelectionCache();
   return getUpstreamChannel(id)!;
 }
 
@@ -3412,6 +3431,7 @@ export function deleteUpstreamChannel(id: string) {
   const existing = getUpstreamChannel(id);
   if (!existing) return null;
   db.prepare('DELETE FROM upstream_channel_groups WHERE id = ?').run(id);
+  invalidateUpstreamSelectionCache();
   return existing;
 }
 
@@ -3606,7 +3626,9 @@ export function cloneUpstreamChannel(id: string, options: { includeKeys?: boolea
     return getUpstreamChannel(newId)!;
   });
 
-  return clone();
+  const channel = clone();
+  invalidateUpstreamSelectionCache();
+  return channel;
 }
 
 export function addUpstreamChannelKey(groupId: string, input: UpstreamChannelKeyInput) {
@@ -3678,6 +3700,7 @@ export function addUpstreamChannelKey(groupId: string, input: UpstreamChannelKey
     updatedAt: timestamp
   });
 
+  invalidateUpstreamSelectionCache();
   return getUpstreamChannel(groupId)!;
 }
 
@@ -3757,6 +3780,7 @@ export function updateUpstreamChannelKey(
     updatedAt: next.updatedAt
   });
 
+  invalidateUpstreamSelectionCache();
   return getUpstreamChannel(groupId)!;
 }
 
@@ -3767,6 +3791,7 @@ export function deleteUpstreamChannelKey(groupId: string, keyId: string) {
   if (!row) return null;
   const key = publicUpstreamKey(mapUpstreamChannelKey(row) as UpstreamChannelKey);
   db.prepare('DELETE FROM upstream_channel_keys WHERE id = ? AND channel_group_id = ?').run(keyId, groupId);
+  invalidateUpstreamSelectionCache();
   return key;
 }
 
@@ -3901,63 +3926,157 @@ export function resolveUpstreamRates(input: { groupId: string; agent: AgentType;
   };
 }
 
-function keyPoolAgent(group: UpstreamChannelGroup, agent: AgentType): UpstreamKeyAgentType {
-  return group.useIndependentAgentKeys ? agent : 'shared';
+function mapUpstreamSelectionCandidate(row: any, agent: AgentType): UpstreamSelectionCandidate {
+  return {
+    group: mapUpstreamChannel({
+      id: row.group_id,
+      channel_number: row.group_channel_number,
+      name: row.group_name,
+      website_url: row.group_website_url,
+      status: row.group_status,
+      claude_api_url: row.group_claude_api_url,
+      codex_api_url: row.group_codex_api_url,
+      use_independent_agent_keys: row.group_use_independent_agent_keys,
+      input_rate_per_million: row.group_input_rate_per_million,
+      output_rate_per_million: row.group_output_rate_per_million,
+      cache_creation_rate_per_million: row.group_cache_creation_rate_per_million,
+      cache_read_rate_per_million: row.group_cache_read_rate_per_million,
+      server_error_recovery_minutes: row.group_server_error_recovery_minutes,
+      display_usage_multiplier: row.group_display_usage_multiplier,
+      sort_order: row.group_sort_order,
+      degraded_until: row.group_degraded_until,
+      degraded_reason: row.group_degraded_reason,
+      degraded_status_code: row.group_degraded_status_code,
+      created_at: row.group_created_at,
+      updated_at: row.group_updated_at
+    }) as UpstreamChannelGroup,
+    key: mapUpstreamChannelKey({
+      id: row.key_id,
+      channel_group_id: row.key_channel_group_id,
+      name: row.key_name,
+      agent_type: row.key_agent_type,
+      key_hash: row.key_hash,
+      key_preview: row.key_preview,
+      key_ciphertext: row.key_ciphertext,
+      status: row.key_status,
+      sort_order: row.key_sort_order,
+      expires_at: row.key_expires_at,
+      exhausted_until: row.key_exhausted_until,
+      failure_reason: row.key_failure_reason,
+      failure_status_code: row.key_failure_status_code,
+      last_used_at: row.key_last_used_at,
+      created_at: row.key_created_at,
+      updated_at: row.key_updated_at
+    }) as UpstreamChannelKey,
+    agent,
+    apiUrl: row.api_url
+  };
+}
+
+export function listUpstreamSelectionCandidates(agent: AgentType): UpstreamSelectionCandidate[] {
+  const now = Date.now();
+  const cached = upstreamSelectionCache.get(agent);
+  if (cached && cached.expiresAt > now) {
+    return cached.selections;
+  }
+
+  const timestamp = nowIso();
+  const selections = (db
+    .prepare(
+      `
+      SELECT
+        g.id AS group_id,
+        g.channel_number AS group_channel_number,
+        g.name AS group_name,
+        g.website_url AS group_website_url,
+        g.status AS group_status,
+        g.claude_api_url AS group_claude_api_url,
+        g.codex_api_url AS group_codex_api_url,
+        g.use_independent_agent_keys AS group_use_independent_agent_keys,
+        g.input_rate_per_million AS group_input_rate_per_million,
+        g.output_rate_per_million AS group_output_rate_per_million,
+        g.cache_creation_rate_per_million AS group_cache_creation_rate_per_million,
+        g.cache_read_rate_per_million AS group_cache_read_rate_per_million,
+        g.server_error_recovery_minutes AS group_server_error_recovery_minutes,
+        g.display_usage_multiplier AS group_display_usage_multiplier,
+        g.sort_order AS group_sort_order,
+        g.degraded_until AS group_degraded_until,
+        g.degraded_reason AS group_degraded_reason,
+        g.degraded_status_code AS group_degraded_status_code,
+        g.created_at AS group_created_at,
+        g.updated_at AS group_updated_at,
+        k.id AS key_id,
+        k.channel_group_id AS key_channel_group_id,
+        k.name AS key_name,
+        k.agent_type AS key_agent_type,
+        k.key_hash AS key_hash,
+        k.key_preview AS key_preview,
+        k.key_ciphertext AS key_ciphertext,
+        k.status AS key_status,
+        k.sort_order AS key_sort_order,
+        k.expires_at AS key_expires_at,
+        k.exhausted_until AS key_exhausted_until,
+        k.failure_reason AS key_failure_reason,
+        k.failure_status_code AS key_failure_status_code,
+        k.last_used_at AS key_last_used_at,
+        k.created_at AS key_created_at,
+        k.updated_at AS key_updated_at,
+        CASE WHEN @agent = 'codex' THEN g.codex_api_url ELSE g.claude_api_url END AS api_url
+      FROM upstream_channel_groups g
+      JOIN upstream_channel_keys k
+        ON k.channel_group_id = g.id
+       AND k.agent_type = CASE WHEN g.use_independent_agent_keys = 1 THEN @agent ELSE 'shared' END
+      WHERE g.status = 'active'
+        AND k.status = 'active'
+        AND (k.expires_at IS NULL OR k.expires_at > @now)
+        AND (CASE WHEN @agent = 'codex' THEN g.codex_api_url ELSE g.claude_api_url END) != ''
+      ORDER BY
+        CASE WHEN g.degraded_until IS NOT NULL AND g.degraded_until > @now THEN 1 ELSE 0 END ASC,
+        g.sort_order ASC,
+        g.created_at ASC,
+        CASE WHEN k.exhausted_until IS NOT NULL AND k.exhausted_until > @now THEN 1 ELSE 0 END ASC,
+        k.sort_order ASC,
+        k.created_at ASC
+    `
+    )
+    .all({ agent, now: timestamp }) as any[]).map((row) => mapUpstreamSelectionCandidate(row, agent));
+
+  upstreamSelectionCache.set(agent, {
+    expiresAt: now + upstreamSelectionCacheTtlMs,
+    selections
+  });
+  return selections;
+}
+
+export function materializeUpstreamSelection(candidate: UpstreamSelectionCandidate): UpstreamSelection | null {
+  const now = Date.now();
+  const cached = upstreamRawKeyCache.get(candidate.key.id);
+  if (
+    cached &&
+    cached.ciphertext === candidate.key.keyCiphertext &&
+    cached.updatedAt === candidate.key.updatedAt &&
+    cached.expiresAt > now
+  ) {
+    return { ...candidate, rawKey: cached.rawKey };
+  }
+
+  const rawKey = decryptKey(candidate.key.keyCiphertext);
+  if (!rawKey) return null;
+
+  upstreamRawKeyCache.set(candidate.key.id, {
+    ciphertext: candidate.key.keyCiphertext,
+    updatedAt: candidate.key.updatedAt,
+    rawKey,
+    expiresAt: now + upstreamRawKeyCacheTtlMs
+  });
+  return { ...candidate, rawKey };
 }
 
 export function listUpstreamSelections(agent: AgentType): UpstreamSelection[] {
-  clearExpiredUpstreamDegradations();
-  const groups = (db
-    .prepare(
-      `
-      SELECT *
-      FROM upstream_channel_groups
-      WHERE status = 'active'
-      ORDER BY
-        CASE WHEN degraded_until IS NOT NULL THEN 1 ELSE 0 END ASC,
-        sort_order ASC,
-        created_at ASC
-    `
-    )
-    .all() as any[]).map((row) => mapUpstreamChannel(row) as UpstreamChannelGroup);
-
-  const selections: UpstreamSelection[] = [];
-  for (const group of groups) {
-    const apiUrl = agent === 'codex' ? group.codexApiUrl : group.claudeApiUrl;
-    if (!apiUrl) continue;
-
-    const keyAgent = keyPoolAgent(group, agent);
-    const keys = (db
-      .prepare(
-        `
-        SELECT *
-        FROM upstream_channel_keys
-        WHERE channel_group_id = @groupId
-          AND agent_type = @agentType
-          AND status = 'active'
-          AND (expires_at IS NULL OR expires_at > @now)
-        ORDER BY
-          CASE WHEN exhausted_until IS NOT NULL THEN 1 ELSE 0 END ASC,
-          sort_order ASC,
-          created_at ASC
-      `
-      )
-      .all({ groupId: group.id, agentType: keyAgent, now: nowIso() }) as any[]).map((row) => mapUpstreamChannelKey(row) as UpstreamChannelKey);
-
-    for (const key of keys) {
-      const rawKey = decryptKey(key.keyCiphertext);
-      if (!rawKey) continue;
-      selections.push({
-        group,
-        key,
-        rawKey,
-        agent,
-        apiUrl
-      });
-    }
-  }
-
-  return selections;
+  return listUpstreamSelectionCandidates(agent).flatMap((candidate) => {
+    const selection = materializeUpstreamSelection(candidate);
+    return selection ? [selection] : [];
+  });
 }
 
 export function markUpstreamKeyFailure(input: {
@@ -3985,6 +4104,7 @@ export function markUpstreamKeyFailure(input: {
     statusCode: input.statusCode,
     updatedAt: nowIso()
   });
+  invalidateUpstreamSelectionCache();
 }
 
 export function markUpstreamGroupFailure(input: {
@@ -4015,6 +4135,7 @@ export function markUpstreamGroupFailure(input: {
     statusCode: input.statusCode,
     updatedAt: nowIso()
   });
+  invalidateUpstreamSelectionCache();
 }
 
 export function resetUpstreamKeyFailureState(keyId: string) {
@@ -4028,6 +4149,7 @@ export function resetUpstreamKeyFailureState(keyId: string) {
     WHERE id = @keyId
   `
   ).run({ keyId, updatedAt: nowIso() });
+  invalidateUpstreamSelectionCache();
 }
 
 export { extractResetTime };

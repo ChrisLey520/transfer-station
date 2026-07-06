@@ -303,6 +303,7 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_platform_orders_gift_card ON platform_orders(gift_card_code);
     CREATE INDEX IF NOT EXISTS idx_upstream_groups_status_order ON upstream_channel_groups(status, sort_order);
     CREATE INDEX IF NOT EXISTS idx_upstream_keys_group_agent_status ON upstream_channel_keys(channel_group_id, agent_type, status);
+    CREATE INDEX IF NOT EXISTS idx_upstream_keys_selection ON upstream_channel_keys(channel_group_id, agent_type, status, expires_at, sort_order, created_at);
     CREATE INDEX IF NOT EXISTS idx_upstream_model_rates_group_agent ON upstream_model_rates(channel_group_id, agent_type, model);
   `);
 
