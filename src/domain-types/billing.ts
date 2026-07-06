@@ -78,6 +78,7 @@ export type KeySecret = {
 export type UsageLog = {
   id: string;
   apiKeyId: string | null;
+  apiKeyName?: string | null;
   channelGroupId: string | null;
   channelNumber: number | null;
   usageSource: 'plan' | 'balance' | 'none';
@@ -128,6 +129,8 @@ export type Summary = {
   weeklyTokens: number;
   fiveHourCostCents: number;
   weeklyCostCents: number;
+  fiveHourResetAt: string;
+  weeklyResetAt: string;
   todayTokens: number;
   todayCostCents: number;
   todayRequests: number;

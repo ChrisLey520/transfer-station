@@ -98,6 +98,7 @@ export function mapLog(row: any) {
   return {
     id: row.id,
     apiKeyId: row.api_key_id,
+    apiKeyName: row.api_key_name ?? null,
     channelGroupId: row.channel_group_id ?? null,
     channelNumber: row.channel_number ?? null,
     usageSource: row.usage_source ?? 'plan',

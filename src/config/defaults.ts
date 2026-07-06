@@ -12,6 +12,8 @@ export const defaultSummary: Summary = {
   weeklyTokens: 0,
   fiveHourCostCents: 0,
   weeklyCostCents: 0,
+  fiveHourResetAt: '',
+  weeklyResetAt: '',
   todayTokens: 0,
   todayCostCents: 0,
   todayRequests: 0,

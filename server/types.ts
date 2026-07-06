@@ -62,6 +62,7 @@ export type ApiKeyRecord = {
 export type UsageLog = {
   id: string;
   apiKeyId: string | null;
+  apiKeyName?: string | null;
   channelGroupId: string | null;
   channelNumber: number | null;
   usageSource: 'plan' | 'balance' | 'none';

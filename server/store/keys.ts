@@ -14,6 +14,36 @@ function getPlan(id: string): Plan | null {
   return row ? mapPlan(row) : null;
 }
 
+function getKeyUsageSnapshot(apiKeyId: string) {
+  const accountQuota = getQuotaSnapshot(apiKeyId);
+  const now = Date.now();
+  const fiveHourSince = new Date(now - 5 * 60 * 60 * 1000).toISOString();
+  const weeklySince = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const usage = db
+    .prepare(
+      `
+      SELECT
+        COALESCE(SUM(CASE WHEN created_at >= @fiveHourSince THEN total_cost_cents ELSE 0 END), 0) as five_hour_used,
+        COALESCE(SUM(total_cost_cents), 0) as weekly_used
+      FROM usage_logs
+      WHERE api_key_id = @apiKeyId
+        AND created_at >= @weeklySince
+        AND status_code BETWEEN 200 AND 299
+        AND COALESCE(usage_source, 'plan') = 'plan'
+    `
+    )
+    .get({ apiKeyId, fiveHourSince, weeklySince }) as { five_hour_used: number; weekly_used: number };
+
+  const fiveHourUsed = Number(usage.five_hour_used ?? 0);
+  const weeklyUsed = Number(usage.weekly_used ?? 0);
+
+  return {
+    ...accountQuota,
+    fiveHourUsed,
+    weeklyUsed
+  };
+}
+
 export function listKeys(userId?: string): KeyListItem[] {
   if (userId) {
     ensureAccountState(userId);
@@ -49,7 +79,7 @@ export function listKeys(userId?: string): KeyListItem[] {
       createdAt: key.createdAt,
       lastUsedAt: key.lastUsedAt,
       planName: row.plan_name,
-      usage: getQuotaSnapshot(row.id),
+      usage: getKeyUsageSnapshot(row.id),
       todayUsageCents: getTodayUsageCents(row.id)
     };
   });
@@ -194,7 +224,9 @@ function getTodayUsageCents(apiKeyId: string) {
       `
       SELECT COALESCE(SUM(total_cost_cents), 0) as used
       FROM usage_logs
-      WHERE api_key_id = ? AND created_at >= ? AND status_code BETWEEN 200 AND 299
+      WHERE api_key_id = ?
+        AND created_at >= ?
+        AND status_code BETWEEN 200 AND 299
     `
     )
     .get(apiKeyId, today.toISOString()) as { used: number };

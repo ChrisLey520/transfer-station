@@ -33,6 +33,13 @@ const logRangeMs: Record<LogRange, number> = {
   '30d': thirtyDaysMs
 };
 
+type QuotaScope = {
+  apiKeyId: string;
+  userId: string | null;
+  fiveHourLimit: number;
+  weeklyLimit: number;
+};
+
 export function pruneUsageLogs() {
   const cutoff = new Date(Date.now() - thirtyDaysMs).toISOString();
   lastUsageLogPrunedAt = Date.now();
@@ -44,13 +51,43 @@ function pruneUsageLogsIfDue() {
   return pruneUsageLogs();
 }
 
-export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
+function invalidateUsageSummaryCacheForApiKey(apiKeyId: string | null | undefined) {
+  if (!apiKeyId) return;
+  const row = db.prepare('SELECT user_id FROM api_keys WHERE id = ?').get(apiKeyId) as { user_id: string | null } | undefined;
+  if (row?.user_id) {
+    usageSummaryCache.delete(row.user_id);
+  }
+}
+
+function quotaScopeKeyFilter(scope: Pick<QuotaScope, 'userId'>) {
+  return 'api_key_id IN (SELECT id FROM api_keys WHERE user_id = @userId)';
+}
+
+function getQuotaScope(apiKeyId: string): QuotaScope | null {
   const key = db
     .prepare(
       `
-      SELECT api_keys.id, api_keys.user_id, plans.five_hour_token_limit, plans.weekly_token_limit
+      SELECT api_keys.id, api_keys.user_id
       FROM api_keys
-      JOIN plans ON plans.id = api_keys.plan_id
+      WHERE api_keys.id = ?
+    `
+    )
+    .get(apiKeyId) as { id: string; user_id: string | null } | undefined;
+
+  if (!key?.user_id) return null;
+  ensureAccountState(key.user_id);
+
+  const scoped = db
+    .prepare(
+      `
+      SELECT
+        api_keys.id,
+        api_keys.user_id,
+        COALESCE(account_plans.five_hour_token_limit, 0) as five_hour_token_limit,
+        COALESCE(account_plans.weekly_token_limit, 0) as weekly_token_limit
+      FROM api_keys
+      LEFT JOIN account_state ON account_state.id = api_keys.user_id
+      LEFT JOIN plans account_plans ON account_plans.id = account_state.current_plan_id
       WHERE api_keys.id = ?
     `
     )
@@ -58,12 +95,32 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
     | { id: string; user_id: string | null; five_hour_token_limit: number; weekly_token_limit: number }
     | undefined;
 
+  if (!scoped) return null;
+  if (!scoped.user_id) return null;
+  return {
+    apiKeyId: scoped.id,
+    userId: scoped.user_id,
+    fiveHourLimit: Number(scoped.five_hour_token_limit ?? 0),
+    weeklyLimit: Number(scoped.weekly_token_limit ?? 0)
+  };
+}
+
+function quotaResetAt(limit: number, used: number, oldestUsageAt: string | null | undefined, windowMs: number, now: number) {
+  if (limit <= 0) return '';
+  if (used <= 0) return new Date(now + windowMs).toISOString();
+  const oldestTime = oldestUsageAt ? new Date(oldestUsageAt).getTime() : NaN;
+  return Number.isFinite(oldestTime) ? new Date(oldestTime + windowMs).toISOString() : new Date(now + windowMs).toISOString();
+}
+
+export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
+  const scope = getQuotaScope(apiKeyId);
+
   let balanceCents = 0;
-  if (key?.user_id) {
-    balanceCents = ensureAccountState(key.user_id).freeCreditCents;
+  if (scope?.userId) {
+    balanceCents = ensureAccountState(scope.userId).freeCreditCents;
   }
 
-  if (!key) {
+  if (!scope) {
     return {
       fiveHourUsed: 0,
       fiveHourLimit: 0,
@@ -81,6 +138,12 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
   const now = Date.now();
   const fiveHourSince = new Date(now - fiveHoursMs).toISOString();
   const weeklySince = new Date(now - sevenDaysMs).toISOString();
+  const params = {
+    apiKeyId: scope.apiKeyId,
+    userId: scope.userId,
+    fiveHourSince,
+    weeklySince
+  };
 
   const usage = db
     .prepare(
@@ -88,16 +151,16 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
       SELECT
         COALESCE(SUM(CASE WHEN created_at >= @fiveHourSince THEN total_cost_cents ELSE 0 END), 0) as five_hour_used,
         COALESCE(SUM(total_cost_cents), 0) as weekly_used,
-        MIN(CASE WHEN created_at >= @fiveHourSince THEN created_at END) as oldest_five_hour,
-        MIN(created_at) as oldest_weekly
+        MIN(CASE WHEN created_at >= @fiveHourSince AND total_cost_cents > 0 THEN created_at END) as oldest_five_hour,
+        MIN(CASE WHEN total_cost_cents > 0 THEN created_at END) as oldest_weekly
       FROM usage_logs
-      WHERE api_key_id = @apiKeyId
+      WHERE ${quotaScopeKeyFilter(scope)}
         AND created_at >= @weeklySince
         AND status_code BETWEEN 200 AND 299
-        AND usage_source = 'plan'
+        AND COALESCE(usage_source, 'plan') = 'plan'
     `
     )
-    .get({ apiKeyId, fiveHourSince, weeklySince }) as {
+    .get(params) as {
     five_hour_used: number;
     weekly_used: number;
     oldest_five_hour: string | null;
@@ -106,23 +169,19 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
 
   const fiveHourUsed = Number(usage.five_hour_used ?? 0);
   const weeklyUsed = Number(usage.weekly_used ?? 0);
-  const fiveHourResetAt = usage.oldest_five_hour
-    ? new Date(new Date(usage.oldest_five_hour).getTime() + fiveHoursMs).toISOString()
-    : '';
-  const weeklyResetAt = usage.oldest_weekly
-    ? new Date(new Date(usage.oldest_weekly).getTime() + sevenDaysMs).toISOString()
-    : '';
+  const fiveHourResetAt = quotaResetAt(scope.fiveHourLimit, fiveHourUsed, usage.oldest_five_hour, fiveHoursMs, now);
+  const weeklyResetAt = quotaResetAt(scope.weeklyLimit, weeklyUsed, usage.oldest_weekly, sevenDaysMs, now);
 
-  const remainingFiveHour = Math.max(0, key.five_hour_token_limit - fiveHourUsed);
-  const remainingWeekly = Math.max(0, key.weekly_token_limit - weeklyUsed);
+  const remainingFiveHour = Math.max(0, scope.fiveHourLimit - fiveHourUsed);
+  const remainingWeekly = Math.max(0, scope.weeklyLimit - weeklyUsed);
   const hasPlanQuota = remainingFiveHour > 0 && remainingWeekly > 0;
   const quotaSource = hasPlanQuota ? 'plan' : balanceCents > 0 ? 'balance' : 'none';
 
   return {
     fiveHourUsed,
-    fiveHourLimit: key.five_hour_token_limit,
+    fiveHourLimit: scope.fiveHourLimit,
     weeklyUsed,
-    weeklyLimit: key.weekly_token_limit,
+    weeklyLimit: scope.weeklyLimit,
     remainingFiveHour,
     remainingWeekly,
     balanceCents,
@@ -148,12 +207,11 @@ function formatQuotaResetAt(value: string) {
 }
 
 function combinedQuotaResetAt(quota: QuotaSnapshot) {
-  const fiveHourTime = Date.parse(quota.fiveHourResetAt);
-  const weeklyTime = Date.parse(quota.weeklyResetAt);
-  const resetAt = Math.max(
-    Number.isFinite(fiveHourTime) ? fiveHourTime : 0,
-    Number.isFinite(weeklyTime) ? weeklyTime : 0
-  );
+  const exhaustedResetTimes = [
+    quota.remainingFiveHour <= 0 ? Date.parse(quota.fiveHourResetAt) : NaN,
+    quota.remainingWeekly <= 0 ? Date.parse(quota.weeklyResetAt) : NaN
+  ].filter(Number.isFinite);
+  const resetAt = exhaustedResetTimes.length ? Math.max(...exhaustedResetTimes) : 0;
   return resetAt > 0 ? new Date(resetAt).toISOString() : quota.weeklyResetAt || quota.fiveHourResetAt;
 }
 
@@ -258,6 +316,8 @@ export function createUsageLog(
 	  `
 	  ).run(log);
 
+  invalidateUsageSummaryCacheForApiKey(log.apiKeyId);
+
   if (
     log.apiKeyId &&
     log.usageSource === 'balance' &&
@@ -325,7 +385,9 @@ export function listUsageLogs(input: UsageLogQuery = {}) {
   const logs = db
     .prepare(
       `
-      SELECT * FROM usage_logs
+      SELECT usage_logs.*, log_keys.name AS api_key_name
+      FROM usage_logs
+      LEFT JOIN api_keys log_keys ON log_keys.id = usage_logs.api_key_id
       ${where}
       ORDER BY usage_logs.created_at DESC
       LIMIT @pageSize OFFSET @offset
@@ -346,17 +408,38 @@ export function usageSummaryForUser(userId: string) {
   if (usageSummaryCacheTtlMs > 0) {
     const now = Date.now();
     const cached = usageSummaryCache.get(userId);
-    if (cached && cached.expiresAt > now) return cached.summary;
+    if (cached && cached.expiresAt > now) return refreshUnusedQuotaResetTimes(userId, cached.summary, now);
 
     const summary = buildUsageSummaryForUser(userId);
     usageSummaryCache.set(userId, {
       expiresAt: now + usageSummaryCacheTtlMs,
       summary
     });
-    return summary;
+    return refreshUnusedQuotaResetTimes(userId, summary, now);
   }
 
   return buildUsageSummaryForUser(userId);
+}
+
+function refreshUnusedQuotaResetTimes(userId: string, summary: any, now = Date.now()) {
+  const account = ensureAccountState(userId);
+  const accountPlan = account.currentPlanId
+    ? (db
+        .prepare('SELECT five_hour_token_limit, weekly_token_limit FROM plans WHERE id = ?')
+        .get(account.currentPlanId) as { five_hour_token_limit: number; weekly_token_limit: number } | undefined)
+    : undefined;
+
+  return {
+    ...summary,
+    fiveHourResetAt:
+      Number(summary.fiveHourCostCents) <= 0
+        ? quotaResetAt(Number(accountPlan?.five_hour_token_limit ?? 0), 0, null, fiveHoursMs, now)
+        : summary.fiveHourResetAt,
+    weeklyResetAt:
+      Number(summary.weeklyCostCents) <= 0
+        ? quotaResetAt(Number(accountPlan?.weekly_token_limit ?? 0), 0, null, sevenDaysMs, now)
+        : summary.weeklyResetAt
+  };
 }
 
 function buildUsageSummaryForUser(userId: string) {
@@ -397,6 +480,8 @@ function buildUsageSummaryForUser(userId: string) {
         COALESCE(SUM(CASE WHEN created_at >= @weeklySince AND status_code BETWEEN 200 AND 299 AND COALESCE(usage_source, 'plan') = 'plan'${userClause} THEN total_tokens ELSE 0 END), 0) as weekly_tokens,
         COALESCE(SUM(CASE WHEN created_at >= @fiveHourSince AND status_code BETWEEN 200 AND 299 AND COALESCE(usage_source, 'plan') = 'plan'${userClause} THEN total_cost_cents ELSE 0 END), 0) as five_hour_cost_cents,
         COALESCE(SUM(CASE WHEN created_at >= @weeklySince AND status_code BETWEEN 200 AND 299 AND COALESCE(usage_source, 'plan') = 'plan'${userClause} THEN total_cost_cents ELSE 0 END), 0) as weekly_cost_cents,
+        MIN(CASE WHEN created_at >= @fiveHourSince AND status_code BETWEEN 200 AND 299 AND COALESCE(usage_source, 'plan') = 'plan'${userClause} AND total_cost_cents > 0 THEN created_at END) as oldest_five_hour,
+        MIN(CASE WHEN created_at >= @weeklySince AND status_code BETWEEN 200 AND 299 AND COALESCE(usage_source, 'plan') = 'plan'${userClause} AND total_cost_cents > 0 THEN created_at END) as oldest_weekly,
         COALESCE(SUM(CASE WHEN status_code >= 400${userClause} THEN 1 ELSE 0 END), 0) as errors
       FROM usage_logs
     `
@@ -445,6 +530,13 @@ function buildUsageSummaryForUser(userId: string) {
     .all(seriesParams);
 
   const account = ensureAccountState(userId);
+  const accountPlan = account.currentPlanId
+    ? (db
+        .prepare('SELECT five_hour_token_limit, weekly_token_limit FROM plans WHERE id = ?')
+        .get(account.currentPlanId) as { five_hour_token_limit: number; weekly_token_limit: number } | undefined)
+    : undefined;
+  const accountFiveHourLimit = Number(accountPlan?.five_hour_token_limit ?? 0);
+  const accountWeeklyLimit = Number(accountPlan?.weekly_token_limit ?? 0);
 
   return {
     totalTokens: Number(totals.total_tokens),
@@ -458,6 +550,20 @@ function buildUsageSummaryForUser(userId: string) {
     weeklyTokens: Number(rolling.weekly_tokens),
     fiveHourCostCents: Number(rolling.five_hour_cost_cents),
     weeklyCostCents: Number(rolling.weekly_cost_cents),
+    fiveHourResetAt: quotaResetAt(
+      accountFiveHourLimit,
+      Number(rolling.five_hour_cost_cents),
+      rolling.oldest_five_hour,
+      fiveHoursMs,
+      now
+    ),
+    weeklyResetAt: quotaResetAt(
+      accountWeeklyLimit,
+      Number(rolling.weekly_cost_cents),
+      rolling.oldest_weekly,
+      sevenDaysMs,
+      now
+    ),
     todayTokens: Number(todayUsage.tokens),
     todayCostCents: Number(todayUsage.cost_cents),
     todayRequests: Number(todayUsage.requests),
