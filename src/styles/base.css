@@ -134,6 +134,37 @@ button {
   cursor: pointer;
 }
 
+.app-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.12), rgba(var(--surface-rgb), 0.96));
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.app-alert-icon {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--accent-text);
+}
+
+.app-alert > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 284px 1fr;
@@ -1401,4 +1432,3 @@ code {
   margin: 0;
   font-size: 14px;
 }
-

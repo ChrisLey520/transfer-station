@@ -1,4 +1,4 @@
-import { Empty } from '../components/common.js';
+import { Empty, PurchasePromoAlert } from '../components/common.js';
 import { RechargeModal } from '../components/RechargeModal.js';
 import { buildRechargeModalProps } from '../components/toast.js';
 import { Bootstrap, QuotaSnapshot } from '../types.js';
@@ -26,6 +26,7 @@ export function UsagePage({ data, t, onChangePlan }: { data: Bootstrap; t: Recor
 
   return (
     <section className="content-grid">
+      <PurchasePromoAlert t={t} />
       <section className="overview-hero">
         <article className="plan-summary">
           <span>{t.currentPlan}</span>

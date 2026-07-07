@@ -72,7 +72,7 @@ export function useAnnouncementsPanel({
   function insertTemplate(kind: 'maintenance' | 'purchase') {
     const templates = {
       maintenance: '系统维护通知\n\n我们将于今晚 23:00 进行短时维护，期间部分请求可能出现延迟。维护完成后服务会自动恢复，无需额外操作。',
-      purchase: `礼品码购买通知\n\n请加入 QQ 群 ${officialQqGroupNumber} 联系管理员购买礼品码。购买后可前往“套餐/余额”兑换；如遇同步延迟，请稍后刷新页面或联系管理员处理。`
+      purchase: `礼品码购买通知\n\n活动期间购买额度，1￥ = 5$。\n\n请加入 QQ 群 ${officialQqGroupNumber} 联系管理员购买礼品码。购买后可前往“套餐/余额”兑换；如遇同步延迟，请稍后刷新页面或联系管理员处理。`
     };
     setContent((value) => (value.trim() ? `${value.trim()}\n\n${templates[kind]}` : templates[kind]));
   }

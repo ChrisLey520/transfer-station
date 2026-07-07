@@ -94,6 +94,7 @@ export const en = {
     sevenDayShort: 'per 7 days',
     monthlyBilling: 'Monthly · billed monthly',
     planFootnote: '* Usage limits apply. Displayed prices do not include applicable taxes. Prices and plans may change. Upgrades take effect immediately and unused time is prorated.',
+    purchasePromoAlert: 'During the promotion, credit purchases are converted at RMB ¥1 = $5.',
     purchaseChannelTitle: 'Choose purchase channel',
     purchaseChannelDescription: 'Choose a channel and plan, then click Buy to open the matching product link.',
     rechargeChannelDescription: 'Choose a channel and credit amount, then click Buy to open the matching product link.',

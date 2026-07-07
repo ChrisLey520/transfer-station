@@ -94,6 +94,7 @@ export const zhTW = {
     sevenDayShort: '每 7 天',
     monthlyBilling: '每月 · 按月計費',
     planFootnote: '* 適用用量限制。展示價格不含適用稅費。價格和方案如有變動，保留最終解釋權。升級立即生效，當前方案未使用的時間將折算。',
+    purchasePromoAlert: '活動期間購買額度，1￥ = 5$',
     purchaseChannelTitle: '選擇購買渠道',
     purchaseChannelDescription: '選擇購買渠道和套餐後，點擊去購買開啟對應商品連結。',
     rechargeChannelDescription: '選擇購買渠道和額度後，點擊去購買開啟對應商品連結。',

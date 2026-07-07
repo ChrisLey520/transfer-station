@@ -94,6 +94,7 @@ export const zhCN = {
     sevenDayShort: '每 7 天',
     monthlyBilling: '每月 · 按月计费',
     planFootnote: '* 适用用量限制。展示价格不含适用税费。价格和方案如有变动，保留最终解释权。升级立即生效，当前方案未使用的时间将折算。',
+    purchasePromoAlert: '活动期间购买额度，1￥ = 5$',
     purchaseChannelTitle: '选择购买渠道',
     purchaseChannelDescription: '选择购买渠道和套餐后，点击去购买打开对应商品链接。',
     rechargeChannelDescription: '选择购买渠道和额度后，点击去购买打开对应商品链接。',

@@ -1,3 +1,4 @@
+import { PurchasePromoAlert } from '../components/common.js';
 import { RechargeModal } from '../components/RechargeModal.js';
 import { buildRechargeModalProps } from '../components/toast.js';
 import { tr } from '../i18n.js';
@@ -43,6 +44,7 @@ export function OverviewPage({
   return (
     <section className="overview-page">
       <p className="overview-welcome">{welcomeMessage}</p>
+      <PurchasePromoAlert t={t} />
 
       <div className="overview-card-grid">
         <article className="overview-card current-plan-overview">

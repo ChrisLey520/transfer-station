@@ -1,4 +1,4 @@
-import { LoadingContent } from '../components/common.js';
+import { LoadingContent, PurchasePromoAlert } from '../components/common.js';
 import { RechargeModal } from '../components/RechargeModal.js';
 import { buildRechargeModalProps } from '../components/toast.js';
 import { tr } from '../i18n.js';
@@ -37,7 +37,8 @@ export function PlansPanel({
 
   if (view === 'change') {
     return (
-      <>
+      <section className="billing-page">
+        <PurchasePromoAlert t={t} />
         <PlanChangePage
           currentPlanId={data.account.currentPlanId || undefined}
           openPurchaseDialog={panel.setPurchaseTarget}
@@ -46,12 +47,13 @@ export function PlansPanel({
         {panel.purchaseTarget ? (
           <RechargeModal {...buildRechargeModalProps(t, () => panel.setPurchaseTarget(null))} />
         ) : null}
-      </>
+      </section>
     );
   }
 
   return (
     <section className="billing-page">
+      <PurchasePromoAlert t={t} />
       <section className="billing-section">
         <div className="billing-section-head">
           <h2>{t.billingCurrentPlan}</h2>

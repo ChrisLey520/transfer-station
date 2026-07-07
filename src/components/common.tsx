@@ -1,6 +1,6 @@
 import { currency, tokenK } from '../utils/format.js';
 import { autoUpdate, flip, FloatingPortal, offset, shift, useDismiss, useFloating, useFocus, useHover, useInteractions, useRole } from '@floating-ui/react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Megaphone } from 'lucide-react';
 import React from 'react';
 
 export function ChevronUpIcon() {
@@ -28,6 +28,31 @@ export function LoadingContent({
       {loading ? loadingLabel || children : children}
     </>
   );
+}
+
+export function Alert({
+  children,
+  className = '',
+  icon,
+  variant = 'info'
+}: {
+  children: React.ReactNode;
+  className?: string;
+  icon?: React.ReactNode;
+  variant?: 'info';
+}) {
+  return (
+    <div className={`app-alert app-alert-${variant} ${className}`.trim()} role="status">
+      <span className="app-alert-icon" aria-hidden="true">
+        {icon || <Megaphone size={18} />}
+      </span>
+      <span>{children}</span>
+    </div>
+  );
+}
+
+export function PurchasePromoAlert({ t }: { t: Record<string, string> }) {
+  return <Alert>{t.purchasePromoAlert || '活动期间购买额度，1￥ = 5$'}</Alert>;
 }
 
 export function Tooltip({ content, children }: { content: React.ReactNode; children: React.ReactElement<any> }) {
