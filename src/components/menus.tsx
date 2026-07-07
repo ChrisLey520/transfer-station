@@ -1,7 +1,7 @@
 import { accentThemeOptions, themeModeOptions } from '../config/themeOptions.js';
 import { AccentTheme, Language, ThemeMode, UserProfile } from '../types.js';
 import { autoUpdate, flip, FloatingPortal, offset, shift, useDismiss, useFloating, useInteractions, useRole } from '@floating-ui/react';
-import { ChevronDown, Globe2, LogOut, Palette, UserRound } from 'lucide-react';
+import { ChevronDown, Globe2, KeyRound, LogOut, Palette, UserRound } from 'lucide-react';
 import React from 'react';
 
 export function LanguageMenu(props: { language: Language; setLanguage: (language: Language) => void }) {
@@ -117,10 +117,12 @@ export function ThemeMenu({
 export function AccountMenu({
   user,
   t,
+  onChangePassword,
   onLogout
 }: {
   user: UserProfile;
   t: Record<string, string>;
+  onChangePassword: () => void;
   onLogout: () => void;
 }) {
   const [isOpen, setIsOpen] = React.useState(false);
@@ -181,6 +183,18 @@ export function AccountMenu({
           <button
             type="button"
             className="account-menu-item"
+            role="menuitem"
+            onClick={() => {
+              setIsOpen(false);
+              onChangePassword();
+            }}
+          >
+            <KeyRound size={15} />
+            {t.changePassword}
+          </button>
+          <button
+            type="button"
+            className="account-menu-item danger"
             role="menuitem"
             onClick={() => {
               setIsOpen(false);

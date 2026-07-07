@@ -10,6 +10,7 @@ import {
   listRedeemedGiftCards,
   listUsageLogs,
   listUsers,
+  resetUserPassword,
   usageSummaryForUser
 } from '../store.js';
 
@@ -75,6 +76,20 @@ export function registerActivityRoutes(app: Express) {
       return;
     }
     res.json({ user });
+  });
+
+  app.patch('/api/admin/users/:id/password', adminGuard, (req, res) => {
+    const targetUser = getUserDetail(routeParam(req.params.id));
+    if (!targetUser) {
+      res.status(404).json({ error: '用户不存在。' });
+      return;
+    }
+
+    try {
+      res.json(resetUserPassword(targetUser.id));
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : '重置密码失败。' });
+    }
   });
 
   app.get('/api/admin/users/:id/logs', adminGuard, (req, res) => {

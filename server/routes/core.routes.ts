@@ -2,6 +2,7 @@ import type { Express, RequestHandler } from 'express';
 import { z } from 'zod';
 import { adminGuard, authUser } from '../auth.js';
 import {
+  changeUserPassword,
   dismissAnnouncementForUser,
   getAccountState,
   getAnnouncementForUser,
@@ -124,6 +125,28 @@ export function registerCoreRoutes(app: Express, slidingWindowGuard: SlidingWind
     const user = authUser(req, res);
     if (!user) return;
     res.json({ user, announcement: getAnnouncementForUser(user.id) });
+  });
+
+  app.patch('/api/auth/password', slidingWindowGuard('auth-password-change', 20, 10 * 60_000), (req, res) => {
+    const user = authUser(req, res);
+    if (!user) return;
+
+    const parsed = z
+      .object({
+        currentPassword: z.string().min(1),
+        newPassword: z.string().min(8)
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    try {
+      res.json({ user: changeUserPassword(user.id, parsed.data) });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : '修改密码失败。' });
+    }
   });
 
   app.get('/api/bootstrap', (req, res) => {

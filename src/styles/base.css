@@ -823,12 +823,22 @@ code {
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: var(--danger);
+  color: var(--ink);
   text-align: left;
 }
 
 .account-menu-item:hover {
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--accent-text);
+}
+
+.account-menu-item.danger {
+  color: var(--danger);
+}
+
+.account-menu-item.danger:hover {
   background: rgba(180, 35, 24, 0.1);
+  color: var(--danger);
 }
 
 .theme-menu {

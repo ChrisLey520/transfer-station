@@ -472,3 +472,49 @@
   border-color: var(--teal);
 }
 
+.password-dialog {
+  width: min(100%, 580px);
+}
+
+.password-dialog .password-input-shell,
+.password-dialog .password-input-shell input {
+  width: 100%;
+}
+
+.form-error-text {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.modal-copy {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.modal-copy.success {
+  color: var(--accent-text);
+  font-weight: 800;
+}
+
+.generated-password-result {
+  display: grid;
+  gap: 8px;
+}
+
+.generated-password-result > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.generated-password-result .secret-output {
+  margin-top: 0;
+}
+
+.generated-password-result code {
+  overflow-wrap: anywhere;
+}

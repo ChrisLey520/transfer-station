@@ -15,6 +15,7 @@ export function useUsersCenterPanel({ headers, refreshTick, t }: { headers: Head
   const [pageData, setPageData] = React.useState<UserListPage>({ users: [], total: 0, page: 1, pageSize: 20, sortField: 'createdAt', sortOrder: 'desc' });
   const [loading, setLoading] = React.useState(false);
   const [isSearching, setIsSearching] = React.useState(false);
+  const [resettingUserId, setResettingUserId] = React.useState<string | null>(null);
   const [sortLoadingField, setSortLoadingField] = React.useState<UserSortField | null>(null);
 
   const loadUsers = React.useCallback(async () => {
@@ -65,6 +66,29 @@ export function useUsersCenterPanel({ headers, refreshTick, t }: { headers: Head
     setPage(1);
   }
 
+  async function resetUserPassword(userId: string) {
+    if (resettingUserId) return null;
+    setResettingUserId(userId);
+    try {
+      const response = await fetch(`/api/admin/users/${userId}/password`, {
+        method: 'PATCH',
+        headers
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return null;
+      }
+      const password = (payload as { password?: unknown }).password;
+      return typeof password === 'string' ? password : null;
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+      return null;
+    } finally {
+      setResettingUserId(null);
+    }
+  }
+
   return {
     isSearching,
     loading,
@@ -72,6 +96,8 @@ export function useUsersCenterPanel({ headers, refreshTick, t }: { headers: Head
     search,
     setPage,
     setSearch,
+    resetUserPassword,
+    resettingUserId,
     sortField,
     sortLoadingField,
     sortOrder,

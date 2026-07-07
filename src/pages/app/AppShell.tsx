@@ -1,9 +1,13 @@
 import { ButtonSpinner } from '../../components/common.js';
 import { AppSidebar, MobileMenuButton } from '../../components/layout.js';
 import { AccountMenu, LanguageMenu, ThemeMenu } from '../../components/menus.js';
+import { PasswordDialog } from '../../components/PasswordDialog.js';
+import { showErrorToast, showSuccessToast } from '../../components/toast.js';
+import { tr } from '../../i18n.js';
 import type { AccentTheme, Bootstrap, Language, NavMenuItem, Tab, ThemeMode } from '../../types.js';
+import { readJsonResponse, responseErrorMessage, unknownErrorMessage } from '../../utils/api.js';
 import { ArrowLeft, RefreshCcw } from 'lucide-react';
-import type React from 'react';
+import React from 'react';
 
 type AppFrameProps = {
   activeTab: Tab;
@@ -128,17 +132,58 @@ export function RefreshButton({ disabled, onRefresh, refreshing, title }: Refres
 type AccountActionsProps = {
   data: Bootstrap;
   disabled: boolean;
+  headers: HeadersInit;
   onLogout: () => void;
   onRefresh: () => void;
   refreshing: boolean;
   t: Record<string, string>;
 };
 
-export function AccountActions({ data, disabled, onLogout, onRefresh, refreshing, t }: AccountActionsProps) {
+export function AccountActions({ data, disabled, headers, onLogout, onRefresh, refreshing, t }: AccountActionsProps) {
+  const [isPasswordDialogOpen, setIsPasswordDialogOpen] = React.useState(false);
+  const [isChangingPassword, setIsChangingPassword] = React.useState(false);
+
+  async function changePassword(values: { currentPassword?: string; newPassword: string }) {
+    if (!values.currentPassword || isChangingPassword) return;
+    setIsChangingPassword(true);
+    try {
+      const response = await fetch('/api/auth/password', {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({
+          currentPassword: values.currentPassword,
+          newPassword: values.newPassword
+        })
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return;
+      }
+      showSuccessToast(tr(t, 'passwordChanged', '密码已修改。'));
+      setIsPasswordDialogOpen(false);
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+    } finally {
+      setIsChangingPassword(false);
+    }
+  }
+
   return (
     <>
       <RefreshButton disabled={disabled} onRefresh={onRefresh} refreshing={refreshing} title={t.refresh} />
-      <AccountMenu user={data.user} t={t} onLogout={onLogout} />
+      <AccountMenu user={data.user} t={t} onChangePassword={() => setIsPasswordDialogOpen(true)} onLogout={onLogout} />
+      {isPasswordDialogOpen ? (
+        <PasswordDialog
+          busy={isChangingPassword}
+          onClose={() => setIsPasswordDialogOpen(false)}
+          onSubmit={changePassword}
+          submitLabel={tr(t, 'savePassword', '保存密码')}
+          subtitle={tr(t, 'changePasswordHint', '输入当前密码并设置新的登录密码。')}
+          t={t}
+          title={tr(t, 'changePassword', '修改密码')}
+        />
+      ) : null}
     </>
   );
 }

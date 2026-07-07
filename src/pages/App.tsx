@@ -152,7 +152,15 @@ export function App() {
         themeMode={app.themeMode}
         title={app.pageTitle}
       >
-        <AccountActions data={app.data} disabled={app.refreshing} onLogout={app.logout} onRefresh={() => void app.handleRefresh()} refreshing={app.refreshing} t={app.t} />
+        <AccountActions
+          data={app.data}
+          disabled={app.refreshing}
+          headers={app.headers}
+          onLogout={app.logout}
+          onRefresh={() => void app.handleRefresh()}
+          refreshing={app.refreshing}
+          t={app.t}
+        />
       </AppTopbar>
       {app.loading ? <div className="loading-line" /> : null}
       <AppContent

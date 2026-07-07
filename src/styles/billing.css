@@ -331,7 +331,8 @@
     minmax(108px, 0.8fr)
     minmax(96px, 0.72fr)
     minmax(150px, 1fr)
-    minmax(150px, 1fr);
+    minmax(150px, 1fr)
+    minmax(48px, 0.32fr);
   gap: 14px;
   align-items: center;
 }
@@ -423,13 +424,15 @@
   position: relative;
   align-items: center;
   max-width: 100%;
-  color: var(--ink);
+  color: var(--accent-text);
   font-size: 13px;
   font-weight: 700;
 }
 
 .users-table-link:hover {
+  background: rgba(var(--accent-rgb), 0.08);
   color: var(--accent-text);
+  text-decoration: none;
 }
 
 .users-table-link-text {
@@ -439,6 +442,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.users-table-actions {
+  display: inline-flex;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 .floating-tooltip {
@@ -474,7 +483,8 @@
       minmax(96px, 0.8fr)
       minmax(90px, 0.7fr)
       minmax(132px, 0.95fr)
-      minmax(132px, 0.95fr);
+      minmax(132px, 0.95fr)
+      minmax(42px, 0.32fr);
     gap: 12px;
   }
 }

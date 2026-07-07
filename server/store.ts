@@ -1,6 +1,7 @@
 export { seedDefaults } from './store/seed.js';
 
 export {
+  changeUserPassword,
   clearAnnouncement,
   dismissAnnouncementForUser,
   getAnnouncementForUser,
@@ -11,6 +12,7 @@ export {
   listUsers,
   loginUser,
   registerUser,
+  resetUserPassword,
   saveAnnouncement
 } from './store/users.js';
 

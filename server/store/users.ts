@@ -5,6 +5,7 @@ import type { Announcement, User, UserRole } from '../types.js';
 import { ensureAccountState } from './accounts.js';
 
 const makeId = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 16);
+const makeTemporaryPassword = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*', 16);
 
 type UserSession = {
   user: User;
@@ -58,6 +59,40 @@ function syncConfiguredAdminRoles() {
 
 function passwordDigest(password: string, salt: string) {
   return crypto.scryptSync(password, salt, 64).toString('hex');
+}
+
+function passwordMatches(password: string, row: { password_hash: string; password_salt: string }) {
+  const digest = passwordDigest(password, row.password_salt);
+  const expected = Buffer.from(row.password_hash, 'hex');
+  const actual = Buffer.from(digest, 'hex');
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+}
+
+function updateUserPassword(userId: string, password: string) {
+  const timestamp = nowIso();
+  const salt = crypto.randomBytes(16).toString('hex');
+  const result = db
+    .prepare(
+      `
+      UPDATE users
+      SET password_hash = @passwordHash,
+        password_salt = @passwordSalt,
+        updated_at = @updatedAt
+      WHERE id = @userId
+    `
+    )
+    .run({
+      userId,
+      passwordHash: passwordDigest(password, salt),
+      passwordSalt: salt,
+      updatedAt: timestamp
+    });
+
+  if (result.changes === 0) {
+    throw new Error('用户不存在。');
+  }
+
+  return getUserById(userId)!;
 }
 
 function makeToken() {
@@ -318,16 +353,31 @@ export function loginUser(input: { email: string; password: string }) {
     throw new Error('邮箱或密码不正确。');
   }
 
-  const digest = passwordDigest(input.password, row.password_salt);
-  const expected = Buffer.from(row.password_hash, 'hex');
-  const actual = Buffer.from(digest, 'hex');
-  if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) {
+  if (!passwordMatches(input.password, row)) {
     throw new Error('邮箱或密码不正确。');
   }
 
   const user = toPublicUser(row);
   ensureAccountState(user.id);
   return createSession(user);
+}
+
+export function changeUserPassword(userId: string, input: { currentPassword: string; newPassword: string }) {
+  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+  if (!row) {
+    throw new Error('用户不存在。');
+  }
+  if (!passwordMatches(input.currentPassword, row)) {
+    throw new Error('当前密码不正确。');
+  }
+
+  return updateUserPassword(userId, input.newPassword);
+}
+
+export function resetUserPassword(userId: string) {
+  const password = makeTemporaryPassword();
+  const user = updateUserPassword(userId, password);
+  return { user, password };
 }
 
 export function getUserById(userId: string): User | null {
