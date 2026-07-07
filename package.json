@@ -2,7 +2,7 @@
   "name": "claude-code-transfer-station",
   "version": "0.1.0",
   "private": true,
-  "description": "Claude Code API transfer station with multilingual admin, API key management, usage logs, and rolling quota plans.",
+  "description": "Claude Code API transfer station with multilingual admin, API key management, usage logs, and cycle quota plans.",
   "type": "module",
   "packageManager": "pnpm@11.7.0",
   "engines": {

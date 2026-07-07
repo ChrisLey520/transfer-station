@@ -1,10 +1,10 @@
 # Claude Code Transfer Station
 
-一个面向 Claude Code 的 API 中转站原型，包含中转 API、密钥管理、Token 用量统计、使用日志、套餐管理，以及类似 Codex 的双滚动额度限制：
+一个面向 Claude Code 的 API 中转站原型，包含中转 API、密钥管理、Token 用量统计、使用日志、套餐管理，以及类似 Codex 的双周期额度限制：
 
-- 5 小时滚动 Token 上限
-- 7 天滚动 Token 上限
-- 任一窗口耗尽时，请求会被 `429` 拦截
+- 5 小时周期 Token 上限
+- 7 天周期 Token 上限
+- 任一周期耗尽时，请求会被 `402` 拦截
 - 管理台支持简体中文、繁体中文、英文
 
 ## Run Locally
@@ -150,16 +150,16 @@ GET http://localhost:8787/claude-code/key/health
 GET http://localhost:8787/codex/v1/key/health
 ```
 
-健康检查会先用当前中转 Key 做本地额度预检：如果 5 小时、7 天滚动额度与自由余额都不足，会直接返回 `402`，不会继续探测上游。只有本地额度预检通过后，中转站才会向上游发送固定的极短探测消息 `Reply OK.`。任一可用上游渠道能返回正常模型回复即视为健康；所有上游渠道都失败或无文本回复时返回不健康。`Claude Code` 与 `Codex` 的探测请求都限制最大输出 Token 为 8，且不写入用户用量日志，也不会额外消耗额度。
+健康检查会先用当前中转 Key 做本地额度预检：如果 5 小时、7 天周期额度与自由余额都不足，会直接返回 `402`，不会继续探测上游。只有本地额度预检通过后，中转站才会向上游发送固定的极短探测消息 `Reply OK.`。任一可用上游渠道能返回正常模型回复即视为健康；所有上游渠道都失败或无文本回复时返回不健康。`Claude Code` 与 `Codex` 的探测请求都限制最大输出 Token 为 8，且不写入用户用量日志，也不会额外消耗额度。
 
 ## Quota Model
 
 每个 API Key 绑定一个套餐。套餐包含：
 
-- `fiveHourTokenLimit`: 最近 5 小时成功请求的 Token 总量上限
-- `weeklyTokenLimit`: 最近 7 天成功请求的 Token 总量上限
+- `fiveHourTokenLimit`: 5 小时消费周期内的 Token 总量上限
+- `weeklyTokenLimit`: 7 天消费周期内的 Token 总量上限
 
-中转请求进入时先检查两个滚动窗口。请求完成后，从 Anthropic 响应的 `usage` 中记录输入、输出与总 Token。流式 SSE 请求会边转发边解析 usage，并在结束时写入日志。
+首次消费会开启对应的 5 小时 / 7 天消费周期，周期内的成功请求会累计用量；周期到期后该周期额度归零，下一次消费会开启新周期。中转请求进入时会先检查两个周期额度。请求完成后，从 Anthropic 响应的 `usage` 中记录输入、输出与总 Token。流式 SSE 请求会边转发边解析 usage，并在结束时写入日志。
 
 ## OpenPencil
 

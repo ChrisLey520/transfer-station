@@ -87,7 +87,7 @@ export function seedDefaults() {
     {
       id: 'team',
       name: 'Team',
-      description: 'Shared team pool with higher rolling capacity.',
+      description: 'Shared team pool with higher cycle capacity.',
       fiveHourTokenLimit: 4900,
       weeklyTokenLimit: 38000,
       priceCents: 4900,
@@ -451,7 +451,7 @@ function seedSampleLogs() {
       totalTokens: inputTokens + outputTokens + cacheCreationInputTokens + cacheReadInputTokens,
       ...costs,
       latencyMs: 1200 + index * 67,
-      errorMessage: index === 13 ? 'Five-hour rolling limit exceeded' : null,
+      errorMessage: index === 13 ? 'Five-hour cycle limit exceeded' : null,
       requestId: `seed_${makeId()}`,
       createdAt: new Date(now - index * 86 * 60 * 1000).toISOString()
     };
