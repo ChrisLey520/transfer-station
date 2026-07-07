@@ -5,6 +5,7 @@ import {
   assertQuota,
   createUsageLog,
   extractResetTime,
+  listUpstreamChannels,
   listUpstreamSelectionCandidates,
   materializeUpstreamSelection,
   markUpstreamGroupFailure,
@@ -15,6 +16,7 @@ import {
   touchUpstreamKey
 } from '../store.js';
 import type { AgentType } from '../types.js';
+import { routeParam } from '../http.js';
 import { getTokenUsage, parseJsonText, rewriteJsonUsageText, withoutUsageCost } from '../usage.js';
 import {
   hasUpstreamErrorPayload,
@@ -33,10 +35,144 @@ export type ProxyRouteOptions = HealthProbeOptions & {
   proxyTimeoutMs: number;
 };
 
+const defaultClaudeModels = [
+  'claude-sonnet-5',
+  'claude-sonnet-5-latest',
+  'claude-sonnet-4-6',
+  'claude-sonnet-4-6-latest',
+  'claude-haiku-4-5',
+  'claude-haiku-4-5-latest',
+  'claude-opus-4-8',
+  'claude-sonnet-4-5',
+  'claude-fable-5',
+  'claude-mythos-5',
+  'claude-3-5-sonnet-latest',
+  'claude-3-5-haiku-latest'
+];
+
+const defaultCodexModels = [
+  'gpt-5.5',
+  'gpt-5.4',
+  'gpt-5.3-codex',
+  'gpt-5.2-codex',
+  'gpt-5.1-codex-max',
+  'gpt-5.1-codex',
+  'gpt-5-codex',
+  'gpt-5.1-codex-mini',
+  'codex-mini-latest'
+];
+
+function csvEnvModels(name: string) {
+  return (process.env[name] || '')
+    .split(',')
+    .map((model) => sanitizeModelName(model))
+    .filter(Boolean);
+}
+
+function sanitizeModelName(model: string) {
+  return model
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1B[@-Z\\-_]/g, '')
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+    .replace(/\[\d+(?:;\d+)*m\]?/g, '')
+    .trim();
+}
+
+function sanitizedRequestBody(body: unknown) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  const model = (body as Record<string, unknown>).model;
+  if (typeof model !== 'string') return body;
+  const sanitizedModel = sanitizeModelName(model);
+  if (sanitizedModel === model) return body;
+  return { ...(body as Record<string, unknown>), model: sanitizedModel };
+}
+
+const catalogModelsByPattern: Record<string, string[]> = {
+  'claude-sonnet-5*': ['claude-sonnet-5', 'claude-sonnet-5-latest'],
+  'claude-sonnet-4*': ['claude-sonnet-4-6', 'claude-sonnet-4-6-latest', 'claude-sonnet-4-5'],
+  'claude-3-5-sonnet*': ['claude-3-5-sonnet-latest'],
+  'claude-opus-4*': ['claude-opus-4-8'],
+  'claude-fable-5*': ['claude-fable-5'],
+  'claude-mythos-5*': ['claude-mythos-5'],
+  'claude-haiku-4-5*': ['claude-haiku-4-5', 'claude-haiku-4-5-latest'],
+  'claude-3-5-haiku*': ['claude-3-5-haiku-latest'],
+  'gpt-5.4*': ['gpt-5.4'],
+  'gpt-5*': ['gpt-5.5', 'gpt-5.4']
+};
+
+function catalogModelsFromPattern(model: string) {
+  if (!model.endsWith('*')) return [model];
+  return catalogModelsByPattern[model] || [];
+}
+
+function configuredProxyModels(agent: AgentType) {
+  const configuredModels = listUpstreamChannels()
+    .filter((channel) => channel.status === 'active')
+    .flatMap((channel) => channel.modelRates)
+    .filter((rate) => rate.agentType === agent)
+    .map((rate) => sanitizeModelName(rate.model))
+    .flatMap(catalogModelsFromPattern)
+    .filter((model) => model && model !== '*');
+  const envModels = agent === 'claude-code' ? csvEnvModels('CLAUDE_MODELS') : csvEnvModels('CODEX_MODELS');
+  const fallbackModels = agent === 'claude-code' ? defaultClaudeModels : defaultCodexModels;
+  return Array.from(new Set([...envModels, ...configuredModels, ...fallbackModels]));
+}
+
+function claudeModelPayload(id: string) {
+  return {
+    id,
+    type: 'model',
+    display_name: id,
+    created_at: '2026-01-01T00:00:00Z'
+  };
+}
+
+function codexModelPayload(id: string) {
+  return {
+    id,
+    object: 'model',
+    created: 0,
+    owned_by: 'transfer-station'
+  };
+}
+
+function handleModelsRequest(req: Request, res: Response, agent: AgentType, requestedModel?: string) {
+  const key = authProxyKey(req, res);
+  if (!key) return;
+
+  const models = configuredProxyModels(agent);
+  const requested = requestedModel ? sanitizeModelName(requestedModel) : '';
+  const selectedModels = requested ? [requested] : models;
+
+  if (agent === 'claude-code') {
+    if (requested) {
+      res.json(claudeModelPayload(requested));
+      return;
+    }
+    res.json({
+      data: selectedModels.map(claudeModelPayload),
+      first_id: selectedModels[0] || null,
+      last_id: selectedModels[selectedModels.length - 1] || null,
+      has_more: false
+    });
+    return;
+  }
+
+  if (requested) {
+    res.json(codexModelPayload(requested));
+    return;
+  }
+  res.json({
+    object: 'list',
+    data: selectedModels.map(codexModelPayload)
+  });
+}
+
 async function handleProxyRequest(req: Request, res: Response, agent: AgentType, options: ProxyRouteOptions) {
   const startedAt = Date.now();
   const key = authProxyKey(req, res);
   if (!key) return;
+  const requestBody = sanitizedRequestBody(req.body);
   const upstreamPath = routeToUpstreamPath(req);
 
   const quotaCheck = assertQuota(key);
@@ -46,7 +182,7 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType,
       channelGroupId: null,
       channelNumber: null,
       usageSource: 'none',
-      model: req.body?.model || 'unknown',
+      model: (requestBody as any)?.model || 'unknown',
       path: req.path,
       method: req.method,
       statusCode: quotaCheck.statusCode,
@@ -72,7 +208,7 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType,
   if (!candidates.length) {
     writeProxyLog({
       key,
-      model: req.body?.model || 'unknown',
+      model: (requestBody as any)?.model || 'unknown',
       path: req.path,
       method: req.method,
       statusCode: 500,
@@ -116,14 +252,14 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType,
         const upstream = await fetch(upstreamUrl, {
           method: req.method,
           headers: buildUpstreamHeaders(req, selection, options.anthropicVersion),
-          body: ['GET', 'HEAD'].includes(req.method.toUpperCase()) ? undefined : JSON.stringify(req.body ?? {}),
+          body: ['GET', 'HEAD'].includes(req.method.toUpperCase()) ? undefined : JSON.stringify(requestBody ?? {}),
           signal: controller.signal
         });
 
         touchUpstreamKey(selection.key.id);
         const requestId = upstream.headers.get('request-id') || upstream.headers.get('x-request-id') || `up_${crypto.randomUUID()}`;
         const contentType = upstream.headers.get('content-type') || 'application/json';
-        const requestModel = req.body?.model || 'unknown';
+        const requestModel = (requestBody as any)?.model || 'unknown';
         const rates = resolveUpstreamRates({ groupId: selection.group.id, agent, model: requestModel });
         const displayUsageMultiplier = selection.group.displayUsageMultiplier;
 
@@ -146,6 +282,8 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType,
             statusCode: upstream.status,
             startedAt,
             requestId,
+            agent,
+            requestBody,
             rates,
             displayUsageMultiplier,
             usageSource: quotaCheck.quota.quotaSource
@@ -202,7 +340,7 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType,
           : text;
         res.send(responseBody);
 
-        const loggedModel = req.body?.model || (payload as any)?.model || 'unknown';
+        const loggedModel = (requestBody as any)?.model || (payload as any)?.model || 'unknown';
         const tokenUsage = getTokenUsage(
           payload,
           resolveUpstreamRates({ groupId: selection.group.id, agent, model: loggedModel }),
@@ -243,7 +381,7 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType,
     const message = lastFailure?.message || 'All upstream channels failed';
     writeProxyLog({
       key,
-      model: req.body?.model || 'unknown',
+      model: (requestBody as any)?.model || 'unknown',
       path: req.path,
       method: req.method,
       statusCode: lastFailure?.statusCode || 502,
@@ -261,7 +399,7 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType,
   } catch (error) {
     writeProxyLog({
       key,
-      model: req.body?.model || 'unknown',
+      model: (requestBody as any)?.model || 'unknown',
       path: req.path,
       method: req.method,
       statusCode: 502,
@@ -302,6 +440,16 @@ export function registerProxyRoutes(app: Express, options: ProxyRouteOptions) {
         upstreamConfigured: upstreamConfigured(),
         now: new Date().toISOString()
       });
+    });
+
+    app.get(`${prefix}/models`, (req, res) => {
+      const agent: AgentType = prefix.startsWith('/codex') ? 'codex' : 'claude-code';
+      handleModelsRequest(req, res, agent);
+    });
+
+    app.get(`${prefix}/models/:model`, (req, res) => {
+      const agent: AgentType = prefix.startsWith('/codex') ? 'codex' : 'claude-code';
+      handleModelsRequest(req, res, agent, routeParam(req.params.model));
     });
 
     app.get(`${prefix}/key/health`, (req, res) => {
