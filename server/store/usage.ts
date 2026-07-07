@@ -41,6 +41,19 @@ type QuotaScope = {
   weeklyLimit: number;
 };
 
+type QuotaWindowUsage = {
+  costCents: number;
+  tokens: number;
+  resetAt: string;
+  cycleStartAt: string | null;
+};
+
+type QuotaWindowRow = {
+  created_at: string;
+  total_cost_cents: number;
+  total_tokens: number;
+};
+
 export function pruneUsageLogs() {
   const cutoff = new Date(Date.now() - thirtyDaysMs).toISOString();
   lastUsageLogPrunedAt = Date.now();
@@ -62,6 +75,11 @@ function invalidateUsageSummaryCacheForApiKey(apiKeyId: string | null | undefine
 
 function quotaScopeKeyFilter(scope: Pick<QuotaScope, 'userId'>) {
   return 'api_key_id IN (SELECT id FROM api_keys WHERE user_id = @userId)';
+}
+
+export function planQuotaConsumptionFilter(tablePrefix = '') {
+  const prefix = tablePrefix ? `${tablePrefix}.` : '';
+  return `COALESCE(${prefix}total_cost_cents, 0) > 0`;
 }
 
 function getQuotaScope(apiKeyId: string): QuotaScope | null {
@@ -106,11 +124,86 @@ function getQuotaScope(apiKeyId: string): QuotaScope | null {
   };
 }
 
-function quotaResetAt(limit: number, used: number, oldestUsageAt: string | null | undefined, windowMs: number, now: number) {
+export function quotaResetAt(
+  limit: number,
+  used: number,
+  oldestUsageAt: string | null | undefined,
+  windowMs: number,
+  now: number
+) {
   if (limit <= 0) return '';
-  if (used <= 0) return new Date(now + windowMs).toISOString();
   const oldestTime = oldestUsageAt ? new Date(oldestUsageAt).getTime() : NaN;
-  return Number.isFinite(oldestTime) ? new Date(oldestTime + windowMs).toISOString() : new Date(now + windowMs).toISOString();
+  if (Number.isFinite(oldestTime)) return new Date(oldestTime + windowMs).toISOString();
+  return new Date(now + windowMs).toISOString();
+}
+
+export function getPlanQuotaWindowUsage(input: {
+  whereSql: string;
+  params: Record<string, string | number | null>;
+  windowMs: number;
+  limit: number;
+  now: number;
+}): QuotaWindowUsage {
+  const rows = db
+    .prepare(
+      `
+      SELECT created_at, total_cost_cents, total_tokens
+      FROM usage_logs
+      WHERE ${input.whereSql}
+        AND created_at >= @quotaWindowScanSince
+        AND created_at <= @quotaWindowNow
+        AND status_code BETWEEN 200 AND 299
+        AND COALESCE(usage_source, 'plan') = 'plan'
+        AND ${planQuotaConsumptionFilter()}
+      ORDER BY created_at ASC
+    `
+    )
+    .all({
+      ...input.params,
+      // A recent request can still belong to a cycle that started almost one full window earlier.
+      quotaWindowScanSince: new Date(input.now - input.windowMs * 2).toISOString(),
+      quotaWindowNow: new Date(input.now).toISOString()
+    }) as QuotaWindowRow[];
+
+  return activeQuotaWindowUsage(rows, input.windowMs, input.limit, input.now);
+}
+
+function activeQuotaWindowUsage(rows: QuotaWindowRow[], windowMs: number, limit: number, now: number): QuotaWindowUsage {
+  let cycleStartAt: string | null = null;
+  let cycleStartMs = NaN;
+  let costCents = 0;
+  let tokens = 0;
+
+  for (const row of rows) {
+    const createdMs = Date.parse(row.created_at);
+    if (!Number.isFinite(createdMs) || createdMs > now) continue;
+
+    if (!Number.isFinite(cycleStartMs) || createdMs >= cycleStartMs + windowMs) {
+      cycleStartAt = row.created_at;
+      cycleStartMs = createdMs;
+      costCents = 0;
+      tokens = 0;
+    }
+
+    costCents += Math.max(0, Number(row.total_cost_cents ?? 0));
+    tokens += Math.max(0, Number(row.total_tokens ?? 0));
+  }
+
+  if (!Number.isFinite(cycleStartMs) || cycleStartMs + windowMs <= now) {
+    return {
+      costCents: 0,
+      tokens: 0,
+      resetAt: quotaResetAt(limit, 0, null, windowMs, now),
+      cycleStartAt: null
+    };
+  }
+
+  return {
+    costCents,
+    tokens,
+    resetAt: quotaResetAt(limit, costCents, cycleStartAt, windowMs, now),
+    cycleStartAt
+  };
 }
 
 export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
@@ -137,41 +230,27 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
   }
 
   const now = Date.now();
-  const fiveHourSince = new Date(now - fiveHoursMs).toISOString();
-  const weeklySince = new Date(now - sevenDaysMs).toISOString();
-  const params = {
-    apiKeyId: scope.apiKeyId,
-    userId: scope.userId,
-    fiveHourSince,
-    weeklySince
-  };
+  const quotaWhereSql = quotaScopeKeyFilter(scope);
+  const quotaParams = { userId: scope.userId };
+  const fiveHourUsage = getPlanQuotaWindowUsage({
+    whereSql: quotaWhereSql,
+    params: quotaParams,
+    windowMs: fiveHoursMs,
+    limit: scope.fiveHourLimit,
+    now
+  });
+  const weeklyUsage = getPlanQuotaWindowUsage({
+    whereSql: quotaWhereSql,
+    params: quotaParams,
+    windowMs: sevenDaysMs,
+    limit: scope.weeklyLimit,
+    now
+  });
 
-  const usage = db
-    .prepare(
-      `
-      SELECT
-        COALESCE(SUM(CASE WHEN created_at >= @fiveHourSince THEN total_cost_cents ELSE 0 END), 0) as five_hour_used,
-        COALESCE(SUM(total_cost_cents), 0) as weekly_used,
-        MIN(CASE WHEN created_at >= @fiveHourSince AND total_cost_cents > 0 THEN created_at END) as oldest_five_hour,
-        MIN(CASE WHEN total_cost_cents > 0 THEN created_at END) as oldest_weekly
-      FROM usage_logs
-      WHERE ${quotaScopeKeyFilter(scope)}
-        AND created_at >= @weeklySince
-        AND status_code BETWEEN 200 AND 299
-        AND COALESCE(usage_source, 'plan') = 'plan'
-    `
-    )
-    .get(params) as {
-    five_hour_used: number;
-    weekly_used: number;
-    oldest_five_hour: string | null;
-    oldest_weekly: string | null;
-  };
-
-  const fiveHourUsed = Number(usage.five_hour_used ?? 0);
-  const weeklyUsed = Number(usage.weekly_used ?? 0);
-  const fiveHourResetAt = quotaResetAt(scope.fiveHourLimit, fiveHourUsed, usage.oldest_five_hour, fiveHoursMs, now);
-  const weeklyResetAt = quotaResetAt(scope.weeklyLimit, weeklyUsed, usage.oldest_weekly, sevenDaysMs, now);
+  const fiveHourUsed = fiveHourUsage.costCents;
+  const weeklyUsed = weeklyUsage.costCents;
+  const fiveHourResetAt = fiveHourUsage.resetAt;
+  const weeklyResetAt = weeklyUsage.resetAt;
 
   const remainingFiveHour = Math.max(0, scope.fiveHourLimit - fiveHourUsed);
   const remainingWeekly = Math.max(0, scope.weeklyLimit - weeklyUsed);
@@ -402,7 +481,9 @@ export function usageSummaryForUser(userId: string) {
   if (usageSummaryCacheTtlMs > 0) {
     const now = Date.now();
     const cached = usageSummaryCache.get(userId);
-    if (cached && cached.expiresAt > now) return refreshUnusedQuotaResetTimes(userId, cached.summary, now);
+    if (cached && cached.expiresAt > now && !hasExpiredQuotaReset(cached.summary, now)) {
+      return refreshUnusedQuotaResetTimes(userId, cached.summary, now);
+    }
 
     const summary = buildUsageSummaryForUser(userId);
     usageSummaryCache.set(userId, {
@@ -413,6 +494,19 @@ export function usageSummaryForUser(userId: string) {
   }
 
   return buildUsageSummaryForUser(userId);
+}
+
+function hasExpiredQuotaReset(summary: any, now: number) {
+  return (
+    quotaResetHasPassed(summary.fiveHourResetAt, summary.fiveHourCostCents, now) ||
+    quotaResetHasPassed(summary.weeklyResetAt, summary.weeklyCostCents, now)
+  );
+}
+
+function quotaResetHasPassed(resetAt: unknown, used: unknown, now: number) {
+  if (Number(used) <= 0 || typeof resetAt !== 'string' || !resetAt) return false;
+  const timestamp = Date.parse(resetAt);
+  return Number.isFinite(timestamp) && timestamp <= now;
 }
 
 function refreshUnusedQuotaResetTimes(userId: string, summary: any, now = Date.now()) {
@@ -439,8 +533,6 @@ function refreshUnusedQuotaResetTimes(userId: string, summary: any, now = Date.n
 function buildUsageSummaryForUser(userId: string) {
   pruneUsageLogsIfDue();
   const now = Date.now();
-  const fiveHourSince = new Date(now - fiveHoursMs).toISOString();
-  const weeklySince = new Date(now - sevenDaysMs).toISOString();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todaySince = today.toISOString();
@@ -466,21 +558,14 @@ function buildUsageSummaryForUser(userId: string) {
     )
     .get(userParams) as any;
 
-  const rolling = db
+  const errors = db
     .prepare(
       `
-      SELECT
-        COALESCE(SUM(CASE WHEN created_at >= @fiveHourSince AND status_code BETWEEN 200 AND 299 AND COALESCE(usage_source, 'plan') = 'plan'${userClause} THEN total_tokens ELSE 0 END), 0) as five_hour_tokens,
-        COALESCE(SUM(CASE WHEN created_at >= @weeklySince AND status_code BETWEEN 200 AND 299 AND COALESCE(usage_source, 'plan') = 'plan'${userClause} THEN total_tokens ELSE 0 END), 0) as weekly_tokens,
-        COALESCE(SUM(CASE WHEN created_at >= @fiveHourSince AND status_code BETWEEN 200 AND 299 AND COALESCE(usage_source, 'plan') = 'plan'${userClause} THEN total_cost_cents ELSE 0 END), 0) as five_hour_cost_cents,
-        COALESCE(SUM(CASE WHEN created_at >= @weeklySince AND status_code BETWEEN 200 AND 299 AND COALESCE(usage_source, 'plan') = 'plan'${userClause} THEN total_cost_cents ELSE 0 END), 0) as weekly_cost_cents,
-        MIN(CASE WHEN created_at >= @fiveHourSince AND status_code BETWEEN 200 AND 299 AND COALESCE(usage_source, 'plan') = 'plan'${userClause} AND total_cost_cents > 0 THEN created_at END) as oldest_five_hour,
-        MIN(CASE WHEN created_at >= @weeklySince AND status_code BETWEEN 200 AND 299 AND COALESCE(usage_source, 'plan') = 'plan'${userClause} AND total_cost_cents > 0 THEN created_at END) as oldest_weekly,
-        COALESCE(SUM(CASE WHEN status_code >= 400${userClause} THEN 1 ELSE 0 END), 0) as errors
+      SELECT COALESCE(SUM(CASE WHEN status_code >= 400${userClause} THEN 1 ELSE 0 END), 0) as count
       FROM usage_logs
     `
     )
-    .get({ fiveHourSince, weeklySince, ...userParams }) as any;
+    .get(userParams) as { count: number };
 
   const activeKeys = db
     .prepare("SELECT COUNT(*) as count FROM api_keys WHERE status = 'active' AND user_id = @userId")
@@ -531,6 +616,21 @@ function buildUsageSummaryForUser(userId: string) {
     : undefined;
   const accountFiveHourLimit = Number(accountPlan?.five_hour_token_limit ?? 0);
   const accountWeeklyLimit = Number(accountPlan?.weekly_token_limit ?? 0);
+  const quotaWhereSql = 'api_key_id IN (SELECT id FROM api_keys WHERE user_id = @userId)';
+  const fiveHourUsage = getPlanQuotaWindowUsage({
+    whereSql: quotaWhereSql,
+    params: userParams,
+    windowMs: fiveHoursMs,
+    limit: accountFiveHourLimit,
+    now
+  });
+  const weeklyUsage = getPlanQuotaWindowUsage({
+    whereSql: quotaWhereSql,
+    params: userParams,
+    windowMs: sevenDaysMs,
+    limit: accountWeeklyLimit,
+    now
+  });
 
   return {
     totalTokens: Number(totals.total_tokens),
@@ -540,24 +640,12 @@ function buildUsageSummaryForUser(userId: string) {
     cacheReadInputTokens: Number(totals.cache_read_input_tokens),
     totalCostCents: Number(totals.total_cost_cents),
     requests: Number(totals.requests),
-    fiveHourTokens: Number(rolling.five_hour_tokens),
-    weeklyTokens: Number(rolling.weekly_tokens),
-    fiveHourCostCents: Number(rolling.five_hour_cost_cents),
-    weeklyCostCents: Number(rolling.weekly_cost_cents),
-    fiveHourResetAt: quotaResetAt(
-      accountFiveHourLimit,
-      Number(rolling.five_hour_cost_cents),
-      rolling.oldest_five_hour,
-      fiveHoursMs,
-      now
-    ),
-    weeklyResetAt: quotaResetAt(
-      accountWeeklyLimit,
-      Number(rolling.weekly_cost_cents),
-      rolling.oldest_weekly,
-      sevenDaysMs,
-      now
-    ),
+    fiveHourTokens: fiveHourUsage.tokens,
+    weeklyTokens: weeklyUsage.tokens,
+    fiveHourCostCents: fiveHourUsage.costCents,
+    weeklyCostCents: weeklyUsage.costCents,
+    fiveHourResetAt: fiveHourUsage.resetAt,
+    weeklyResetAt: weeklyUsage.resetAt,
     todayTokens: Number(todayUsage.tokens),
     todayCostCents: Number(todayUsage.cost_cents),
     todayRequests: Number(todayUsage.requests),
@@ -565,7 +653,7 @@ function buildUsageSummaryForUser(userId: string) {
     todayCacheCreationInputTokens: Number(todayUsage.cache_creation_input_tokens),
     todayCacheReadInputTokens: Number(todayUsage.cache_read_input_tokens),
     accountBalanceCents: account.freeCreditCents,
-    errors: Number(rolling.errors),
+    errors: Number(errors.count),
     activeKeys: activeKeys.count,
     series
   };

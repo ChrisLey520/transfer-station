@@ -3,7 +3,7 @@ import { db, mapKey, mapPlan, nowIso } from '../db.js';
 import { createApiKey, decryptKey, encryptKey, hashKey, previewKey } from '../crypto.js';
 import type { ApiKeyRecord, KeyListItem, KeyWithPlan, Plan } from '../types.js';
 import { ensureAccountState } from './accounts.js';
-import { getQuotaSnapshot } from './usage.js';
+import { getPlanQuotaWindowUsage, getQuotaSnapshot } from './usage.js';
 
 const makeId = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 16);
 const lastUsedTouchIntervalMs = 60 * 1000;
@@ -17,30 +17,27 @@ function getPlan(id: string): Plan | null {
 function getKeyUsageSnapshot(apiKeyId: string) {
   const accountQuota = getQuotaSnapshot(apiKeyId);
   const now = Date.now();
-  const fiveHourSince = new Date(now - 5 * 60 * 60 * 1000).toISOString();
-  const weeklySince = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const usage = db
-    .prepare(
-      `
-      SELECT
-        COALESCE(SUM(CASE WHEN created_at >= @fiveHourSince THEN total_cost_cents ELSE 0 END), 0) as five_hour_used,
-        COALESCE(SUM(total_cost_cents), 0) as weekly_used
-      FROM usage_logs
-      WHERE api_key_id = @apiKeyId
-        AND created_at >= @weeklySince
-        AND status_code BETWEEN 200 AND 299
-        AND COALESCE(usage_source, 'plan') = 'plan'
-    `
-    )
-    .get({ apiKeyId, fiveHourSince, weeklySince }) as { five_hour_used: number; weekly_used: number };
-
-  const fiveHourUsed = Number(usage.five_hour_used ?? 0);
-  const weeklyUsed = Number(usage.weekly_used ?? 0);
+  const fiveHourUsage = getPlanQuotaWindowUsage({
+    whereSql: 'api_key_id = @apiKeyId',
+    params: { apiKeyId },
+    windowMs: 5 * 60 * 60 * 1000,
+    limit: accountQuota.fiveHourLimit,
+    now
+  });
+  const weeklyUsage = getPlanQuotaWindowUsage({
+    whereSql: 'api_key_id = @apiKeyId',
+    params: { apiKeyId },
+    windowMs: 7 * 24 * 60 * 60 * 1000,
+    limit: accountQuota.weeklyLimit,
+    now
+  });
 
   return {
     ...accountQuota,
-    fiveHourUsed,
-    weeklyUsed
+    fiveHourUsed: fiveHourUsage.costCents,
+    weeklyUsed: weeklyUsage.costCents,
+    fiveHourResetAt: fiveHourUsage.resetAt,
+    weeklyResetAt: weeklyUsage.resetAt
   };
 }
 
