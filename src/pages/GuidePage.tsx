@@ -1,12 +1,12 @@
 import { MarkdownRenderer } from '../components/markdown.js';
 import { showErrorToast } from '../components/toast.js';
-import { guideAgentOptions, guideDefaultOsByAgent, guideDocumentSources, guideIconSrc, guideOsOptionsByAgent } from '../config/guide.js';
+import { getAvailableGuideOsForAgent, getInitialGuideOsForAgent, guideAgentOptions, guideDocumentSources, guideIconSrc, guideOsOptionsByAgent } from '../config/guide.js';
 import { GuideAgentId, GuideOsId } from '../types.js';
 import React from 'react';
 
 export function GuidePage({ t }: { t: Record<string, string> }) {
   const [selectedAgent, setSelectedAgent] = React.useState<GuideAgentId>('claude-code');
-  const [selectedOs, setSelectedOs] = React.useState<GuideOsId>('macos');
+  const [selectedOs, setSelectedOs] = React.useState<GuideOsId>(() => getInitialGuideOsForAgent('claude-code'));
   const [markdown, setMarkdown] = React.useState('');
   const [loading, setLoading] = React.useState(true);
   const availableOsOptions = guideOsOptionsByAgent[selectedAgent];
@@ -17,7 +17,7 @@ export function GuidePage({ t }: { t: Record<string, string> }) {
 
   React.useEffect(() => {
     if (!availableOsOptions.some((option) => option.id === selectedOs)) {
-      setSelectedOs(guideDefaultOsByAgent[selectedAgent]);
+      setSelectedOs(getAvailableGuideOsForAgent(selectedAgent, selectedOs));
     }
   }, [availableOsOptions, selectedAgent, selectedOs]);
 
