@@ -9,7 +9,9 @@ function centsToAmount(cents: number) {
 
 function formatResetAt(value: string) {
   if (!value) return value;
-  return formatBeijingDateTime(value);
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return value;
+  return `${formatBeijingDateTime(value)} (UTC +8:00)`;
 }
 
 export function upstreamConfigured() {
