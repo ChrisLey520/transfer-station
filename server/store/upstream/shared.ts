@@ -1,5 +1,4 @@
 import { customAlphabet } from 'nanoid';
-import dayjs from 'dayjs';
 import { db, mapUpstreamChannel, mapUpstreamChannelKey, mapUpstreamModelRate, nowIso } from '../../db.js';
 import type {
   AgentType,
@@ -212,12 +211,6 @@ export function clearExpiredUpstreamDegradations() {
   }
 }
 
-function displayDateTime(value: string | null) {
-  if (!value) return null;
-  const date = dayjs(value);
-  return date.isValid() ? date.format('YYYY-MM-DD HH:mm:ss') : value;
-}
-
 export function publicUpstreamKey(key: UpstreamChannelKey): UpstreamChannelKeyListItem {
   return {
     id: key.id,
@@ -228,7 +221,7 @@ export function publicUpstreamKey(key: UpstreamChannelKey): UpstreamChannelKeyLi
     status: key.status,
     sortOrder: key.sortOrder,
     expiresAt: key.expiresAt,
-    exhaustedUntil: displayDateTime(key.exhaustedUntil),
+    exhaustedUntil: key.exhaustedUntil,
     failureReason: key.failureReason,
     failureStatusCode: key.failureStatusCode,
     lastUsedAt: key.lastUsedAt,
