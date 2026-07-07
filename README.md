@@ -111,9 +111,13 @@ pnpm run deploy:k3s
 Claude Code 和 Codex 使用各自的专用入口：
 
 ```text
+Claude Code client ANTHROPIC_BASE_URL: http://localhost:8787/claude-code
 POST http://localhost:8787/claude-code/v1/messages
+Codex base_url: http://localhost:8787/codex/v1
 POST http://localhost:8787/codex/v1/responses
 ```
+
+Claude Code 客户端会自动在 `ANTHROPIC_BASE_URL` 后拼接 `/v1/messages`，所以客户端配置应使用不带 `/v1` 的 `/claude-code`。直接用 curl 或其他 HTTP 客户端调用原始 API 时，仍然请求 `/claude-code/v1/messages`。
 
 客户端使用管理台创建的 `ccx_...` 密钥访问中转站，中转站会按 Agent 类型智能调度到对应上游渠道和上游 API Key。
 
@@ -142,7 +146,7 @@ curl http://localhost:8787/claude-code/v1/messages \
 健康检查端点：
 
 ```text
-GET http://localhost:8787/claude-code/v1/key/health
+GET http://localhost:8787/claude-code/key/health
 GET http://localhost:8787/codex/v1/key/health
 ```
 

@@ -68,7 +68,7 @@ C:\Users\<你的用户名>\.claude\settings.json
 {
   "env": {
     "ANTHROPIC_API_KEY": "YOUR_API_KEY",
-    "ANTHROPIC_BASE_URL": "https://relayhub.chrisley.site/claude-code/v1",
+    "ANTHROPIC_BASE_URL": "https://relayhub.chrisley.site/claude-code",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
   },
   "permissions": {

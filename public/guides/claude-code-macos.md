@@ -57,7 +57,7 @@ Claude Code 会从 `~/.claude/settings.json` 读取配置。如果 `~/.claude/` 
 {
   "env": {
     "ANTHROPIC_API_KEY": "YOUR_API_KEY",
-    "ANTHROPIC_BASE_URL": "https://relayhub.chrisley.site/claude-code/v1",
+    "ANTHROPIC_BASE_URL": "https://relayhub.chrisley.site/claude-code",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
   },
   "permissions": {
