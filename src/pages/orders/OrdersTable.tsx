@@ -1,10 +1,10 @@
 import type { ClaimedOrder } from '../../types.js';
 import { formatDateTime } from '../../utils/time.js';
 
-export function OrdersTable({ orders }: { orders: ClaimedOrder[] }) {
-  if (!orders.length) return <div className="table-empty">暂无记录</div>;
+export function OrdersTable({ orders, className }: { orders: ClaimedOrder[]; className?: string }) {
+  if (!orders.length) return <div className={className ? `table-empty ${className}` : 'table-empty'}>暂无记录</div>;
   return (
-    <div className="gift-card-table">
+    <div className={className ? `gift-card-table ${className}` : 'gift-card-table'}>
       <div className="gift-card-table-head">
         <span>ID</span>
         <span>商品</span>

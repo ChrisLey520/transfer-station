@@ -8,20 +8,22 @@ import { ChevronDown } from 'lucide-react';
 export function LogRows({
   logs,
   t,
+  className,
   compactMode,
   expandedId,
   setExpandedId
 }: {
   logs: UsageLog[];
   t: Record<string, string>;
+  className?: string;
   compactMode?: boolean;
   expandedId?: string | null;
   setExpandedId?: (id: string | null) => void;
 }) {
-  if (!logs.length) return <Empty t={t} />;
+  if (!logs.length) return <Empty t={t} className={className} />;
 
   return (
-    <div className="log-list">
+    <div className={className ? `log-list ${className}` : 'log-list'}>
       {!compactMode ? (
         <div className="log-head" aria-hidden="true">
           <span>{t.model}</span>

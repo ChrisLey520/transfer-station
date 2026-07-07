@@ -86,10 +86,10 @@ export function GiftCardRows({
   );
 }
 
-export function GiftRedemptionTable({ giftCards }: { giftCards: GiftCardCard[] }) {
-  if (!giftCards.length) return <div className="table-empty">暂无记录</div>;
+export function GiftRedemptionTable({ giftCards, className }: { giftCards: GiftCardCard[]; className?: string }) {
+  if (!giftCards.length) return <div className={className ? `table-empty ${className}` : 'table-empty'}>暂无记录</div>;
   return (
-    <div className="gift-card-table">
+    <div className={className ? `gift-card-table ${className}` : 'gift-card-table'}>
       <div className="gift-card-table-head">
         <span>兑换码</span>
         <span>类型</span>

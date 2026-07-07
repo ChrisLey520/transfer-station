@@ -135,9 +135,9 @@ export function UserDetailPanel({ headers, userId, t }: { headers: HeadersInit; 
           </div>
         ) : null}
         {userLoading || detailLoading ? <div className="loading-line" /> : null}
-        {tab === 'logs' ? <LogRows logs={logs.logs} t={t} expandedId={expandedId} setExpandedId={setExpandedId} /> : null}
-        {tab === 'claims' ? <OrdersTable orders={claims.orders} /> : null}
-        {tab === 'redemptions' ? <GiftRedemptionTable giftCards={redemptions.giftCards} /> : null}
+        {tab === 'logs' ? <LogRows logs={logs.logs} t={t} className="user-detail-log-table" expandedId={expandedId} setExpandedId={setExpandedId} /> : null}
+        {tab === 'claims' ? <OrdersTable orders={claims.orders} className="user-detail-order-table" /> : null}
+        {tab === 'redemptions' ? <GiftRedemptionTable giftCards={redemptions.giftCards} className="user-detail-redemption-table" /> : null}
         {tab === 'logs' ? <PaginationBar page={logs.page} pageSize={logs.pageSize} total={logs.total} onPageChange={(next) => setLogs((value) => ({ ...value, page: next }))} loading={detailLoading} t={t} /> : null}
         {tab === 'claims' ? <PaginationBar page={claims.page} pageSize={claims.pageSize} total={claims.total} onPageChange={(next) => setClaims((value) => ({ ...value, page: next }))} loading={detailLoading} t={t} /> : null}
         {tab === 'redemptions' ? <PaginationBar page={redemptions.page} pageSize={redemptions.pageSize} total={redemptions.total} onPageChange={(next) => setRedemptions((value) => ({ ...value, page: next }))} loading={detailLoading} t={t} /> : null}
