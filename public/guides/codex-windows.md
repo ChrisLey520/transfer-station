@@ -72,14 +72,14 @@ C:\Users\<your-username>\.codex\config.toml
 文件内容如下：
 
 ```toml
-model_provider = "freemodel"
+model_provider = "relayhub"
 model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
 disable_response_storage = true
 preferred_auth_method = "apikey"
 
-[model_providers.freemodel]
-name = "freemodel"
+[model_providers.relayhub]
+name = "relayhub"
 base_url = "https://relayhub.chrisley.site/codex/v1"
 wire_api = "responses"
 ```

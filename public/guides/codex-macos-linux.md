@@ -58,14 +58,14 @@ mkdir ~/.codex
 在 `~/.codex` 路径下删除已有的 `config.toml`，然后新建同名文件并写入：
 
 ```toml
-model_provider = "freemodel"
+model_provider = "relayhub"
 model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
 disable_response_storage = true
 preferred_auth_method = "apikey"
 
-[model_providers.freemodel]
-name = "freemodel"
+[model_providers.relayhub]
+name = "relayhub"
 base_url = "https://relayhub.chrisley.site/codex/v1"
 wire_api = "responses"
 ```

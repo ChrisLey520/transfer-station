@@ -180,6 +180,30 @@ function buildCcSwitchUsageScript() {
 })`;
 }
 
+function encodeCcSwitchConfig(config: unknown) {
+  return Buffer.from(JSON.stringify(config), 'utf8').toString('base64');
+}
+
+function buildCodexCcSwitchConfig(input: { endpoint: string; apiKey: string }) {
+  return encodeCcSwitchConfig({
+    auth: {
+      OPENAI_API_KEY: input.apiKey
+    },
+    config: [
+      'model_provider = "relayhub"',
+      'model = "gpt-5.5"',
+      'model_reasoning_effort = "xhigh"',
+      'disable_response_storage = true',
+      'preferred_auth_method = "apikey"',
+      '',
+      '[model_providers.relayhub]',
+      'name = "relayhub"',
+      `base_url = "${input.endpoint}"`,
+      'wire_api = "responses"'
+    ].join('\n')
+  });
+}
+
 export function buildCcSwitchProviderLink(input: {
   appName: 'claude' | 'codex';
   name: string;
@@ -204,5 +228,9 @@ export function buildCcSwitchProviderLink(input: {
     healthCheckUrl: healthUrl,
     healthApiKey: input.apiKey
   });
+  if (input.appName === 'codex') {
+    params.set('configFormat', 'json');
+    params.set('config', buildCodexCcSwitchConfig(input));
+  }
   return `ccswitch://v1/import?${params.toString()}`;
 }
