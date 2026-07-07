@@ -1,7 +1,14 @@
 import type { Request, Response } from 'express';
 import type { UsageRates } from '../pricing.js';
-import type { AnthropicUsage, KeyWithPlan } from '../types.js';
-import { mergeStreamingUsage, scaleSseEvent } from '../usage.js';
+import type { AgentType, AnthropicUsage, KeyWithPlan } from '../types.js';
+import {
+  createTextTokenEstimator,
+  estimateCodexInterruptedUsage,
+  extractCodexOutputDelta,
+  hasUsageTokens,
+  mergeStreamingUsage,
+  scaleSseEvent
+} from '../usage.js';
 import { writeProxyLog } from './logging.js';
 
 export async function streamSse(
@@ -18,6 +25,8 @@ export async function streamSse(
     statusCode: number;
     startedAt: number;
     requestId: string;
+    agent?: AgentType;
+    requestBody?: unknown;
     usageSource?: 'plan' | 'balance' | 'none';
     rates?: UsageRates;
     displayUsageMultiplier?: number;
@@ -30,6 +39,7 @@ export async function streamSse(
   let errorMessage: string | null = upstream.ok ? null : upstream.statusText;
   const displayUsageMultiplier = logContext.displayUsageMultiplier || 1;
   let clientClosed = false;
+  const interruptedOutputEstimator = logContext.agent === 'codex' ? createTextTokenEstimator() : null;
 
   const markClientClosed = () => {
     clientClosed = true;
@@ -62,6 +72,10 @@ export async function streamSse(
           try {
             const event = JSON.parse(dataLine);
             finalUsage = mergeStreamingUsage(finalUsage, event);
+            if (interruptedOutputEstimator && !hasUsageTokens(finalUsage)) {
+              const delta = extractCodexOutputDelta(event);
+              if (delta) interruptedOutputEstimator.add(delta);
+            }
             if (event?.type === 'error') {
               errorMessage = event?.error?.message || 'Streaming error';
             }
@@ -86,13 +100,23 @@ export async function streamSse(
   const upstreamFailed = Boolean(errorMessage);
   const loggedStatusCode =
     upstreamFailed && logContext.statusCode >= 200 && logContext.statusCode <= 299 ? 502 : logContext.statusCode;
+  const useInterruptedUsageEstimate = logContext.agent === 'codex' && clientClosed && !hasUsageTokens(finalUsage);
+  const usage = useInterruptedUsageEstimate
+    ? estimateCodexInterruptedUsage({
+        requestBody: logContext.requestBody,
+        outputTokens: interruptedOutputEstimator?.finish() || 0
+      })
+    : finalUsage;
+  const clientClosedMessage = useInterruptedUsageEstimate
+    ? 'Client disconnected; estimated Codex usage from request and streamed output'
+    : 'Client disconnected; upstream drained for final usage';
   writeProxyLog({
     ...logContext,
     statusCode: loggedStatusCode,
-    usage: finalUsage,
+    usage,
     usageSource: logContext.usageSource,
     usageMultiplier: logContext.displayUsageMultiplier,
     billable: !upstreamFailed,
-    errorMessage: errorMessage || (clientClosed ? 'Client disconnected; upstream drained for final usage' : null)
+    errorMessage: errorMessage || (clientClosed ? clientClosedMessage : null)
   });
 }

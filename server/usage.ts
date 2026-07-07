@@ -26,6 +26,151 @@ export function mergeStreamingUsage(current: AnthropicUsage, event: unknown) {
   return { ...current, ...usage };
 }
 
+export function hasUsageTokens(usage: AnthropicUsage | undefined) {
+  if (!usage) return false;
+  return [
+    (usage as any).input_tokens,
+    (usage as any).prompt_tokens,
+    (usage as any).output_tokens,
+    (usage as any).completion_tokens,
+    (usage as any).cache_creation_input_tokens,
+    (usage as any).cache_read_input_tokens,
+    (usage as any).input_tokens_details?.cache_creation_input_tokens,
+    (usage as any).input_tokens_details?.cache_read_input_tokens,
+    (usage as any).input_tokens_details?.cached_tokens,
+    (usage as any).prompt_tokens_details?.cache_creation_input_tokens,
+    (usage as any).prompt_tokens_details?.cache_read_input_tokens,
+    (usage as any).prompt_tokens_details?.cached_tokens,
+    (usage as any).total_tokens,
+    (usage as any).totalTokens
+  ].some((value) => typeof value === 'number' && Number.isFinite(value) && value > 0);
+}
+
+function isCjkLikeCharacter(char: string) {
+  return /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af\uff00-\uffef]/u.test(char);
+}
+
+export function estimateTextTokens(text: string) {
+  const estimator = createTextTokenEstimator();
+  estimator.add(text);
+  return estimator.finish();
+}
+
+export function createTextTokenEstimator() {
+  let tokens = 0;
+  let segmentLength = 0;
+
+  const flushSegment = () => {
+    if (!segmentLength) return;
+    tokens += Math.ceil(segmentLength / 4);
+    segmentLength = 0;
+  };
+
+  return {
+    add(text: string) {
+      if (!text) return;
+      for (const char of text) {
+        if (/\s/u.test(char)) {
+          flushSegment();
+          continue;
+        }
+        if (isCjkLikeCharacter(char)) {
+          flushSegment();
+          tokens += 1;
+          continue;
+        }
+        segmentLength += char.length;
+      }
+    },
+    finish() {
+      flushSegment();
+      return tokens;
+    }
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function stringifyInputPart(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (!value) return '';
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '';
+  }
+}
+
+function collectStructuredText(value: unknown, parts: string[]) {
+  if (typeof value === 'string') {
+    parts.push(value);
+    return;
+  }
+  if (!value) return;
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectStructuredText(item, parts));
+    return;
+  }
+  if (!isRecord(value)) return;
+
+  const text = value.text;
+  if (typeof text === 'string') parts.push(text);
+
+  const content = value.content;
+  if (typeof content === 'string') {
+    parts.push(content);
+  } else {
+    collectStructuredText(content, parts);
+  }
+
+  for (const key of ['input', 'messages', 'prompt', 'instructions']) {
+    if (key in value) collectStructuredText(value[key], parts);
+  }
+}
+
+export function extractCodexInputText(requestBody: unknown) {
+  if (!isRecord(requestBody)) return stringifyInputPart(requestBody);
+
+  const parts: string[] = [];
+  for (const key of ['instructions', 'input', 'messages', 'prompt']) {
+    if (key in requestBody) collectStructuredText(requestBody[key], parts);
+  }
+  for (const key of ['tools', 'tool_choice', 'response_format', 'text']) {
+    if (key in requestBody) parts.push(stringifyInputPart(requestBody[key]));
+  }
+
+  if (parts.length) return parts.filter(Boolean).join('\n');
+  return stringifyInputPart(requestBody);
+}
+
+export function extractCodexOutputDelta(event: unknown) {
+  if (!isRecord(event)) return '';
+  const type = typeof event.type === 'string' ? event.type : '';
+  if (!type.includes('delta')) return '';
+  for (const key of ['delta', 'text', 'content', 'output_text']) {
+    const value = event[key];
+    if (typeof value === 'string') return value;
+  }
+  return '';
+}
+
+export function estimateCodexInterruptedUsage(input: {
+  requestBody: unknown;
+  outputText?: string;
+  outputTokens?: number;
+}): AnthropicUsage {
+  return {
+    input_tokens: estimateTextTokens(extractCodexInputText(input.requestBody)),
+    output_tokens:
+      typeof input.outputTokens === 'number' && Number.isFinite(input.outputTokens)
+        ? Math.max(0, Math.round(input.outputTokens))
+        : estimateTextTokens(input.outputText || '')
+  };
+}
+
 function scaleTokenCount(value: number, multiplier = 1) {
   return Math.max(0, Math.round(value * Math.max(1, multiplier || 1)));
 }
