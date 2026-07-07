@@ -418,7 +418,74 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType,
 }
 
 export function registerProxyRoutes(app: Express, options: ProxyRouteOptions) {
-  for (const prefix of ['/claude-code/v1', '/codex/v1']) {
+  app.head('/claude-code', (_req, res) => {
+    res.status(204).end();
+  });
+
+  app.get('/claude-code', (_req, res) => {
+    res.json({
+      ok: true,
+      service: 'transfer-station',
+      api: '/claude-code/v1',
+      health: '/claude-code/key/health',
+      balance: '/claude-code/key/balance',
+      usage: '/claude-code/key/usage',
+      now: new Date().toISOString()
+    });
+  });
+
+  app.get('/claude-code/health', (_req, res) => {
+    res.json({
+      ok: true,
+      upstreamConfigured: upstreamConfigured(),
+      now: new Date().toISOString()
+    });
+  });
+
+  app.get('/claude-code/key/health', (req, res) => {
+    const key = authStatusKey(req, res, { allowQuery: true });
+    if (!key) return;
+    void probeKeyHealth(key, 'claude-code', options)
+      .then((health) => {
+        const statusCode =
+          typeof (health as { statusCode?: unknown }).statusCode === 'number'
+            ? ((health as { statusCode: number }).statusCode || 503)
+            : health.ok
+              ? 200
+              : 503;
+        res.status(statusCode).json(health);
+      })
+      .catch((error) => {
+        res.status(503).json({
+          ok: false,
+          status: 'probe_error',
+          message: error instanceof Error ? error.message : 'Health probe failed',
+          now: new Date().toISOString()
+        });
+      });
+  });
+
+  app.get('/claude-code/key/balance', (req, res) => {
+    const key = authStatusKey(req, res);
+    if (!key) return;
+    res.json(buildKeyBalance(key));
+  });
+
+  app.get('/claude-code/key/usage', (req, res) => {
+    const key = authStatusKey(req, res);
+    if (!key) return;
+    res.json(buildKeyUsageStatus(key));
+  });
+
+  app.get('/claude-code/v1/models', (req, res) => {
+    handleModelsRequest(req, res, 'claude-code');
+  });
+
+  app.get('/claude-code/v1/models/:model', (req, res) => {
+    handleModelsRequest(req, res, 'claude-code', routeParam(req.params.model));
+  });
+
+  for (const prefix of ['/codex/v1']) {
     app.head(prefix, (_req, res) => {
       res.status(204).end();
     });
@@ -489,6 +556,26 @@ export function registerProxyRoutes(app: Express, options: ProxyRouteOptions) {
     });
   }
 
+  app.all(['/claude-code/v1/v1', '/claude-code/v1/v1/*route'], (_req, res) => {
+    res.status(404).json({
+      type: 'error',
+      error: {
+        type: 'not_found_error',
+        message: 'Claude Code base URL should be /claude-code, not /claude-code/v1.'
+      }
+    });
+  });
+
+  app.all(['/claude-code/v1/key', '/claude-code/v1/key/*route', '/claude-code/v1/health'], (_req, res) => {
+    res.status(404).json({
+      type: 'error',
+      error: {
+        type: 'not_found_error',
+        message: 'Use /claude-code/key/health, /claude-code/key/balance, or /claude-code/key/usage.'
+      }
+    });
+  });
+
   app.all('/claude-code/v1/*route', (req, res) => {
     void handleProxyRequest(req, res, 'claude-code', options);
   });
@@ -502,7 +589,7 @@ export function registerProxyRoutes(app: Express, options: ProxyRouteOptions) {
       type: 'error',
       error: {
         type: 'not_found_error',
-        message: 'Legacy /v1 endpoint has been removed. Use /claude-code/v1 or /codex/v1.'
+        message: 'Legacy /v1 endpoint has been removed. Use /claude-code as the Claude Code base URL, /claude-code/v1 for raw Anthropic API calls, or /codex/v1 for Codex.'
       }
     });
   });

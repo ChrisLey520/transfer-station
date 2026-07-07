@@ -8,9 +8,27 @@ export function routeToUpstreamPath(req: Request) {
   return '/v1';
 }
 
+function forwardableHeader(name: string) {
+  const normalized = name.toLowerCase();
+  if (['host', 'content-length', 'connection', 'authorization', 'x-api-key'].includes(normalized)) return false;
+  if (normalized.startsWith('anthropic-')) return true;
+  if (normalized.startsWith('x-stainless-')) return true;
+  if (normalized.startsWith('x-app-')) return true;
+  return ['accept', 'accept-language', 'content-type', 'user-agent'].includes(normalized);
+}
+
+function appendForwardedHeaders(headers: Headers, req: Request | null) {
+  if (!req) return;
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (!forwardableHeader(name) || value === undefined) continue;
+    headers.set(name, Array.isArray(value) ? value.join(', ') : String(value));
+  }
+}
+
 export function buildUpstreamHeaders(req: Request | null, selection: UpstreamSelection, anthropicVersion: string) {
   const headers = new Headers();
   headers.set('content-type', 'application/json');
+  appendForwardedHeaders(headers, req);
 
   if (selection.agent === 'claude-code') {
     headers.set('x-api-key', selection.rawKey);

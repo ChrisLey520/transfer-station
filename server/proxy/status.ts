@@ -150,7 +150,7 @@ export function requestOrigin(req: Request, port: number) {
 export function requestAgentApiEndpoint(req: Request, port: number, agent: 'claude' | 'codex') {
   const origin = requestOrigin(req, port);
   const segment = agent === 'claude' ? 'claude-code' : 'codex';
-  return `${origin}/${segment}/v1`;
+  return agent === 'claude' ? `${origin}/${segment}` : `${origin}/${segment}/v1`;
 }
 
 function buildCcSwitchUsageScript() {
