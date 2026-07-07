@@ -13,10 +13,18 @@ export function App() {
   const isPlansPage = app.activeTab === 'plans';
   const showPageBackButton = app.activeTab === 'user-detail' || (app.activeTab === 'plans' && app.planView === 'change');
 
-  if (!app.authToken && app.activeTab === 'guide') {
+  if (app.isPublicHome) {
+    return (
+      <PublicHome
+        onOpenDashboard={() => app.navigate('dashboard')}
+      />
+    );
+  }
+
+  if (!app.authToken && (app.activeTab === 'guide' || app.isPublicGuide)) {
     return (
       <AppFrame
-        activeTab={app.activeTab}
+        activeTab="guide"
         brand={app.t.brand}
         closeLabel={app.closeMenuLabel}
         isNavDrawerOpen={app.isNavDrawerOpen}
@@ -178,5 +186,46 @@ export function App() {
         t={app.t}
       />
     </AppFrame>
+  );
+}
+
+function PublicHome({ onOpenDashboard }: { onOpenDashboard: () => void }) {
+  return (
+    <main className="seo-fallback">
+      <section>
+        <img src="/guide-icon.png" alt="" width={66} height={60} />
+        <p>Claude Code / Codex API 满血中转服务</p>
+        <h1>RelayHub - Claude Code / Codex API 中转站</h1>
+        <p>
+          RelayHub 面向 Claude Code、Codex 和 AI 智能体用户，提供 API 中转站、统一接入、密钥管理、用量统计、套餐额度和客户端配置指南。
+        </p>
+        <section aria-labelledby="home-features-title">
+          <h2 id="home-features-title">RelayHub 能解决什么问题</h2>
+          <ul>
+            <li>统一管理 Claude Code 与 Codex 的 API 中转接入地址和客户端密钥。</li>
+            <li>按 5 小时与 7 天周期统计 Token 用量，帮助团队控制智能体调用成本。</li>
+            <li>提供 Claude Code、Codex、CC-Switch、macOS、Windows、Linux 等常见接入指南。</li>
+          </ul>
+        </section>
+        <nav aria-label="RelayHub 页面">
+          <a
+            className="primary-button"
+            href="/dashboard"
+            onClick={(event) => {
+              event.preventDefault();
+              onOpenDashboard();
+            }}
+          >
+            登录管理台
+          </a>
+          <a
+            className="secondary-button"
+            href="/guide/"
+          >
+            查看接入指南
+          </a>
+        </nav>
+      </section>
+    </main>
   );
 }

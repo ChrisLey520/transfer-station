@@ -3,6 +3,18 @@
     grid-template-columns: 1fr;
   }
 
+  .seo-static-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .seo-static-shell .seo-static-sidebar {
+    position: static;
+    width: auto;
+    height: auto;
+    transform: none;
+    box-shadow: none;
+  }
+
   .sidebar {
     position: fixed;
     top: 0;
@@ -54,6 +66,7 @@
   .metric-grid,
   .overview-card-grid,
   .overview-hero,
+  .seo-guide-grid,
   .split-grid,
   .plan-grid {
     grid-template-columns: 1fr 1fr;
@@ -193,6 +206,7 @@
   .metric-grid,
   .overview-card-grid,
   .overview-hero,
+  .seo-guide-grid,
   .overview-metrics,
   .channel-url-grid,
   .product-link-url-grid,

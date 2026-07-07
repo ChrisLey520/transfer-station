@@ -130,7 +130,11 @@
   background: rgba(var(--surface-rgb), 0.58);
 }
 
-.guide-segmented-control button {
+.guide-segmented-control button,
+.guide-segmented-control a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 34px;
   padding: 0 12px;
   border: 0;
@@ -139,10 +143,13 @@
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
+  text-decoration: none;
 }
 
 .guide-segmented-control button:hover,
-.guide-segmented-control button.active {
+.guide-segmented-control button.active,
+.guide-segmented-control a:hover,
+.guide-segmented-control a.active {
   background: var(--accent);
   color: var(--accent-contrast);
   box-shadow: 0 8px 18px rgba(var(--accent-rgb), 0.18);
@@ -169,6 +176,7 @@
 }
 
 .markdown-toc-item {
+  display: block;
   width: 100%;
   min-height: 34px;
   padding: 7px 9px;
@@ -179,6 +187,7 @@
   font-size: 13px;
   line-height: 1.35;
   text-align: left;
+  text-decoration: none;
 }
 
 .markdown-toc-item:hover {
@@ -369,4 +378,3 @@
   font-size: 12px;
   line-height: 1.7;
 }
-

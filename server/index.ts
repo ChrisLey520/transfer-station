@@ -62,10 +62,31 @@ const __dirname = path.dirname(__filename);
 const clientDist =
   [path.resolve(__dirname, '../client'), path.resolve(__dirname, '../dist/client')].find((candidate) => existsSync(candidate)) ||
   path.resolve(__dirname, '../client');
+const noindexSpaPrefixes = [
+  '/app',
+  '/dashboard',
+  '/keys',
+  '/usage',
+  '/plans',
+  '/orders',
+  '/logs',
+  '/gift-cards',
+  '/products',
+  '/channels',
+  '/announcements',
+  '/users'
+];
+
+function shouldNoindexSpaFallback(pathname: string) {
+  return noindexSpaPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
 
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(clientDist));
-  app.get(/.*/, (_req, res) => {
+  app.get(/.*/, (req, res) => {
+    if (shouldNoindexSpaFallback(req.path)) {
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    }
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 }

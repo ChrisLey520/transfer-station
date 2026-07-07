@@ -4,7 +4,7 @@ import { defaultBootstrap } from '../../config/defaults.js';
 import { dictionary } from '../../i18n.js';
 import type { AccentTheme, AuthSession, Bootstrap, Language, PlanView, Tab, ThemeMode } from '../../types.js';
 import { unknownErrorMessage } from '../../utils/api.js';
-import { readHistoryRoute, writeHistoryRoute } from '../../utils/routing.js';
+import { isPublicGuideRoute, isPublicHomeRoute, readHistoryRoute, writeHistoryRoute } from '../../utils/routing.js';
 import { readAccentTheme, readThemeMode, resolveThemeMode } from '../../utils/theme.js';
 import { nextBootstrapRefreshDelay } from '../../utils/time.js';
 import { adminOnlyTab, buildNav, pageTitleFor } from './appNavigation.js';
@@ -70,7 +70,10 @@ export function useAppController() {
   }, [load, refreshTick]);
 
   React.useEffect(() => {
-    writeHistoryRoute(activeTab, planView, true, activeUserId);
+    const shouldPreservePublicRoute = !authToken && (isPublicHomeRoute() || isPublicGuideRoute());
+    if (!shouldPreservePublicRoute) {
+      writeHistoryRoute(activeTab, planView, true, activeUserId);
+    }
 
     function syncRouteFromHistory() {
       const nextRoute = readHistoryRoute();
@@ -84,7 +87,7 @@ export function useAppController() {
     return () => {
       window.removeEventListener('popstate', syncRouteFromHistory);
     };
-  }, [activeTab, activeUserId, planView]);
+  }, [activeTab, activeUserId, authToken, planView]);
 
   React.useEffect(() => {
     const applyThemeMode = () => {
@@ -220,6 +223,8 @@ export function useAppController() {
     isAdmin,
     isBootstrapReady,
     isNavDrawerOpen,
+    isPublicGuide: !authToken && isPublicGuideRoute(),
+    isPublicHome: !authToken && isPublicHomeRoute(),
     language,
     load,
     loading,

@@ -13,7 +13,7 @@ export const routeTabSegments: Record<Tab, string> = {
   announcements: 'announcements',
   users: 'users',
   'user-detail': 'users',
-  guide: 'guide'
+  guide: 'app/guide'
 };
 
 export const routeSegmentTabs = Object.entries(routeTabSegments).reduce<Record<string, Tab>>((map, [tab, segment]) => {
@@ -24,6 +24,9 @@ export const routeSegmentTabs = Object.entries(routeTabSegments).reduce<Record<s
 export function resolveRoute(route: string): { tab: Tab; planView: PlanView; userId?: string } {
   const normalizedRoute = route.replace(/^\/+/, '').replace(/\/+$/, '');
   const [segment = '', viewSegment = ''] = normalizedRoute.split('/');
+  if (normalizedRoute === 'app/guide') {
+    return { tab: 'guide', planView: 'billing' };
+  }
   if (segment === 'taobao-claim' || segment === 'claim-code') {
     return { tab: 'orders', planView: 'billing' };
   }
@@ -41,6 +44,14 @@ export function readHistoryRoute(): { tab: Tab; planView: PlanView; userId?: str
   const legacyHashRoute = window.location.hash.match(/^#\/(.+)/)?.[1];
   if (legacyHashRoute) return resolveRoute(legacyHashRoute);
   return resolveRoute(window.location.pathname);
+}
+
+export function isPublicHomeRoute() {
+  return !window.location.hash && window.location.pathname === '/';
+}
+
+export function isPublicGuideRoute() {
+  return !window.location.hash && (window.location.pathname === '/guide' || window.location.pathname === '/guide/' || window.location.pathname.startsWith('/guide/'));
 }
 
 export function routeToPath(tab: Tab, planView: PlanView, userId?: string | null) {
