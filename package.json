@@ -18,7 +18,7 @@
     "dev:server": "tsx watch server/index.ts",
     "dev:taobao-worker": "tsx watch server/taobao-worker.ts",
     "dev:web": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && tsc -p tsconfig.server.json && vite build",
+    "build": "tsc --noEmit && tsc -p tsconfig.server.json && vite build && node scripts/generate-seo-pages.mjs",
     "deploy:k3s": "bash scripts/deploy-k3s.sh",
     "start": "NODE_ENV=production node dist/server/index.js",
     "start:taobao-worker": "NODE_ENV=production node dist/server/taobao-worker.js",

@@ -75,6 +75,12 @@ pnpm run seed:prod
 pnpm run start
 ```
 
+`pnpm run build` 会在 Vite 前端构建后生成公开 SEO 页面，包括首页可索引内容、`/guide/`、Claude Code / Codex 各系统指南页、`/sitemap.xml` 和 `/robots.txt`。站点正式域名通过 `PUBLIC_BASE_URL` 生成 canonical 与 sitemap URL，换域名部署时需要同步调整：
+
+```bash
+PUBLIC_BASE_URL=https://relayhub.chrisley.site
+```
+
 也可以只在首次启动或一次性迁移时临时开启：
 
 ```bash

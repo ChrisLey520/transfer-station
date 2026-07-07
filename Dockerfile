@@ -9,6 +9,9 @@ RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
 
+ARG PUBLIC_BASE_URL=https://relayhub.chrisley.site
+ENV PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
+
 COPY . .
 RUN pnpm run build
 

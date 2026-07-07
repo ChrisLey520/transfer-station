@@ -9,6 +9,7 @@ ARCHIVE_PATH="${DEPLOY_ARCHIVE:-/tmp/transfer-station-deploy.tgz}"
 NAMESPACE="${DEPLOY_NAMESPACE:-relayhub}"
 DEPLOYMENT_NAME="${DEPLOYMENT_NAME:-relayhub}"
 HEALTH_URL="${DEPLOY_HEALTH_URL:-https://relayhub.chrisley.site/api/health}"
+PUBLIC_BASE_URL="${DEPLOY_PUBLIC_BASE_URL:-https://relayhub.chrisley.site}"
 RUN_SEED="${DEPLOY_RUN_SEED:-0}"
 
 echo "==> Packaging source from ${ROOT_DIR}"
@@ -32,7 +33,7 @@ rm -rf ${REMOTE_DIR}
 mkdir -p ${REMOTE_DIR}
 tar -xzf ~/transfer-station-deploy.tgz -C ${REMOTE_DIR} --strip-components=1
 cd ${REMOTE_DIR}
-sudo docker build -t relayhub:latest .
+sudo docker build --build-arg PUBLIC_BASE_URL=${PUBLIC_BASE_URL} -t relayhub:latest .
 sudo docker save relayhub:latest | sudo k3s ctr images import -
 sudo k3s kubectl apply -f k8s/relayhub.yaml
 sudo k3s kubectl -n ${NAMESPACE} rollout restart deployment/${DEPLOYMENT_NAME}
@@ -46,5 +47,9 @@ sudo k3s kubectl -n ${NAMESPACE} logs deploy/${DEPLOYMENT_NAME} -c relayhub --ta
 
 echo "==> Checking public health: ${HEALTH_URL}"
 curl -k -I --max-time 15 "${HEALTH_URL}"
+
+echo "==> Checking SEO endpoints"
+curl -k -I --max-time 15 "${PUBLIC_BASE_URL}/sitemap.xml"
+curl -k -I --max-time 15 "${PUBLIC_BASE_URL}/guide/codex/windows/"
 
 echo "==> Deploy complete"
