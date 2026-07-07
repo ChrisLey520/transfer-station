@@ -1,6 +1,6 @@
 import type { Request } from 'express';
-import dayjs from 'dayjs';
 import { assertQuota, getAccountState, hasAvailableUpstreamChannels, usageSummaryForUser } from '../store.js';
+import { formatBeijingDateTime } from '../time.js';
 import type { KeyWithPlan } from '../types.js';
 
 function centsToAmount(cents: number) {
@@ -9,8 +9,7 @@ function centsToAmount(cents: number) {
 
 function formatResetAt(value: string) {
   if (!value) return value;
-  const date = dayjs(value);
-  return date.isValid() ? date.format('YYYY-MM-DD HH:mm:ss') : value;
+  return formatBeijingDateTime(value);
 }
 
 export function upstreamConfigured() {

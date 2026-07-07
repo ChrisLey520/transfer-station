@@ -1,5 +1,6 @@
 import { customAlphabet } from 'nanoid';
 import { db, mapLog, nowIso } from '../db.js';
+import { formatBeijingDateTime } from '../time.js';
 import type { KeyWithPlan, QuotaSnapshot, UsageLog } from '../types.js';
 import { ensureAccountState } from './accounts.js';
 
@@ -196,14 +197,7 @@ export function getAccountState(userId: string) {
 }
 
 function formatQuotaResetAt(value: string) {
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return value;
-  const pad = (part: number) => String(part).padStart(2, '0');
-  return [
-    date.getFullYear(),
-    pad(date.getMonth() + 1),
-    pad(date.getDate())
-  ].join('-') + ` ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  return formatBeijingDateTime(value);
 }
 
 function combinedQuotaResetAt(quota: QuotaSnapshot) {
