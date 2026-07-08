@@ -290,3 +290,12 @@ export function normalizeChannelPriority(value: unknown, fallback = 100) {
   }
   return numeric;
 }
+
+export function normalizeUpstreamKeyPriority(value: unknown, fallback = 100) {
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric) || numeric <= 0) {
+    if (Number.isInteger(fallback) && Number(fallback) > 0) return Number(fallback);
+    throw new Error('Key 优先级必须是大于 0 的正整数。');
+  }
+  return numeric;
+}

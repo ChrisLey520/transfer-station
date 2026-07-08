@@ -31,11 +31,13 @@ type ChannelModalStackProps = {
   keyEditExpiresAt: string;
   keyEditIsPermanent: boolean;
   keyEditName: string;
+  keyEditPriority: number;
   keyEditTarget: UpstreamKeyEditTarget | null;
   keyEditValue: string;
   keyExpiresAt: string;
   keyIsPermanent: boolean;
   keyName: string;
+  keyPriority: number;
   keyTarget: UpstreamChannel | null;
   keyValue: string;
   modelRateForm: ModelRateFormState;
@@ -61,11 +63,13 @@ type ChannelModalStackProps = {
   setKeyEditExpiresAt: React.Dispatch<React.SetStateAction<string>>;
   setKeyEditIsPermanent: React.Dispatch<React.SetStateAction<boolean>>;
   setKeyEditName: React.Dispatch<React.SetStateAction<string>>;
+  setKeyEditPriority: React.Dispatch<React.SetStateAction<number>>;
   setKeyEditTarget: React.Dispatch<React.SetStateAction<UpstreamKeyEditTarget | null>>;
   setKeyEditValue: React.Dispatch<React.SetStateAction<string>>;
   setKeyExpiresAt: React.Dispatch<React.SetStateAction<string>>;
   setKeyIsPermanent: React.Dispatch<React.SetStateAction<boolean>>;
   setKeyName: React.Dispatch<React.SetStateAction<string>>;
+  setKeyPriority: React.Dispatch<React.SetStateAction<number>>;
   setKeyTarget: React.Dispatch<React.SetStateAction<UpstreamChannel | null>>;
   setKeyValue: React.Dispatch<React.SetStateAction<string>>;
   setModelRateForm: React.Dispatch<React.SetStateAction<ModelRateFormState>>;
@@ -87,11 +91,13 @@ export function ChannelModalStack({
   keyEditExpiresAt,
   keyEditIsPermanent,
   keyEditName,
+  keyEditPriority,
   keyEditTarget,
   keyEditValue,
   keyExpiresAt,
   keyIsPermanent,
   keyName,
+  keyPriority,
   keyTarget,
   keyValue,
   modelRateForm,
@@ -117,11 +123,13 @@ export function ChannelModalStack({
   setKeyEditExpiresAt,
   setKeyEditIsPermanent,
   setKeyEditName,
+  setKeyEditPriority,
   setKeyEditTarget,
   setKeyEditValue,
   setKeyExpiresAt,
   setKeyIsPermanent,
   setKeyName,
+  setKeyPriority,
   setKeyTarget,
   setKeyValue,
   setModelRateForm,
@@ -147,6 +155,7 @@ export function ChannelModalStack({
           keyExpiresAt={keyExpiresAt}
           keyIsPermanent={keyIsPermanent}
           keyName={keyName}
+          keyPriority={keyPriority}
           keyTarget={keyTarget}
           keyValue={keyValue}
           savingKey={savingKey}
@@ -154,6 +163,7 @@ export function ChannelModalStack({
           setKeyExpiresAt={setKeyExpiresAt}
           setKeyIsPermanent={setKeyIsPermanent}
           setKeyName={setKeyName}
+          setKeyPriority={setKeyPriority}
           setKeyTarget={setKeyTarget}
           setKeyValue={setKeyValue}
           onSubmit={onSaveKey}
@@ -188,12 +198,14 @@ export function ChannelModalStack({
           keyEditExpiresAt={keyEditExpiresAt}
           keyEditIsPermanent={keyEditIsPermanent}
           keyEditName={keyEditName}
+          keyEditPriority={keyEditPriority}
           keyEditTarget={keyEditTarget}
           keyEditValue={keyEditValue}
           savingEditedKey={savingEditedKey}
           setKeyEditExpiresAt={setKeyEditExpiresAt}
           setKeyEditIsPermanent={setKeyEditIsPermanent}
           setKeyEditName={setKeyEditName}
+          setKeyEditPriority={setKeyEditPriority}
           setKeyEditTarget={setKeyEditTarget}
           setKeyEditValue={setKeyEditValue}
           onSubmit={onSaveEditedKey}

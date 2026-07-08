@@ -114,12 +114,12 @@ export function listUpstreamSelectionCandidates(agent: AgentType): UpstreamSelec
       WHERE g.status = 'active'
         AND k.status = 'active'
         AND (k.expires_at IS NULL OR k.expires_at > @now)
+        AND (k.exhausted_until IS NULL OR k.exhausted_until <= @now)
         AND (CASE WHEN @agent = 'codex' THEN g.codex_api_url ELSE g.claude_api_url END) != ''
       ORDER BY
         CASE WHEN g.degraded_until IS NOT NULL AND g.degraded_until > @now THEN 1 ELSE 0 END ASC,
         g.sort_order ASC,
         g.created_at ASC,
-        CASE WHEN k.exhausted_until IS NOT NULL AND k.exhausted_until > @now THEN 1 ELSE 0 END ASC,
         k.sort_order ASC,
         k.created_at ASC
     `
@@ -236,4 +236,3 @@ export function resetUpstreamKeyFailureState(keyId: string) {
   ).run({ keyId, updatedAt: nowIso() });
   invalidateUpstreamSelectionCache();
 }
-

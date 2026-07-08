@@ -1,4 +1,5 @@
 import { Empty } from '../../components/common.js';
+import { DataTable } from '../../components/DataTable.js';
 import { tr } from '../../i18n.js';
 import type { UpstreamChannel, UpstreamChannelKey, UpstreamModelRate } from '../../types.js';
 import { Plus } from 'lucide-react';
@@ -62,40 +63,41 @@ export function ChannelListSection({
         </button>
       </div>
       {loading ? <div className="loading-line" /> : null}
-      {!channels.length ? (
-        <Empty t={t}>
-          <button type="button" className="primary-button" onClick={onCreate}>
-            <Plus size={17} />
-            {tr(t, 'createChannel', '新增渠道')}
-          </button>
-        </Empty>
-      ) : (
-        <div className="channel-list">
-          {channels.map((channel) => (
-            <ChannelCard
-              key={channel.id}
-              channel={channel}
-              t={t}
-              isExpanded={expandedChannelIds.has(channel.id)}
-              onToggle={() => onToggle(channel.id)}
-              onEdit={() => onEdit(channel)}
-              onChannelStatus={(status) => onChannelStatus(channel, status)}
-              isChannelStatusUpdating={channelStatusUpdatingId === channel.id}
-              onClone={() => onClone(channel)}
-              onAddKey={() => onAddKey(channel)}
-              onDelete={() => onDelete(channel)}
-              onKeyStatus={(key, status) => onKeyStatus(channel, key, status)}
-              onEditKey={(key) => onEditKey(channel, key)}
-              onDeleteKey={(key) => onDeleteKey(channel, key)}
-              onAddModelRate={() => onAddModelRate(channel)}
-              onEditModelRate={(rate) => onEditModelRate(channel, rate)}
-              onDeleteModelRate={(rate) => onDeleteModelRate(channel, rate)}
-              updatingKeyStatusId={updatingKeyStatusId}
-              deletingModelRateId={deletingModelRateId}
-            />
-          ))}
-        </div>
-      )}
+      <DataTable
+        className="channel-list"
+        items={channels}
+        getItemKey={(channel) => channel.id}
+        empty={
+          <Empty t={t}>
+            <button type="button" className="primary-button" onClick={onCreate}>
+              <Plus size={17} />
+              {tr(t, 'createChannel', '新增渠道')}
+            </button>
+          </Empty>
+        }
+        renderItem={(channel) => (
+          <ChannelCard
+            channel={channel}
+            t={t}
+            isExpanded={expandedChannelIds.has(channel.id)}
+            onToggle={() => onToggle(channel.id)}
+            onEdit={() => onEdit(channel)}
+            onChannelStatus={(status) => onChannelStatus(channel, status)}
+            isChannelStatusUpdating={channelStatusUpdatingId === channel.id}
+            onClone={() => onClone(channel)}
+            onAddKey={() => onAddKey(channel)}
+            onDelete={() => onDelete(channel)}
+            onKeyStatus={(key, status) => onKeyStatus(channel, key, status)}
+            onEditKey={(key) => onEditKey(channel, key)}
+            onDeleteKey={(key) => onDeleteKey(channel, key)}
+            onAddModelRate={() => onAddModelRate(channel)}
+            onEditModelRate={(rate) => onEditModelRate(channel, rate)}
+            onDeleteModelRate={(rate) => onDeleteModelRate(channel, rate)}
+            updatingKeyStatusId={updatingKeyStatusId}
+            deletingModelRateId={deletingModelRateId}
+          />
+        )}
+      />
     </section>
   );
 }

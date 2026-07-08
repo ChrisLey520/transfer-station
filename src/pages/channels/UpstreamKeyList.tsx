@@ -1,4 +1,5 @@
 import { Empty, LoadingContent } from '../../components/common.js';
+import { DataTable } from '../../components/DataTable.js';
 import { tr } from '../../i18n.js';
 import type { UpstreamChannelKey } from '../../types.js';
 import { displayDateTime, fullDate } from '../../utils/time.js';
@@ -20,19 +21,26 @@ export function UpstreamKeyList({
   t: Record<string, string>;
   updatingKeyStatusId: string;
 }) {
-  if (!keys.length) return <Empty t={t} />;
-
   return (
-    <div className="upstream-key-list">
-      {keys.map((key) => {
+    <DataTable
+      className="upstream-key-list"
+      headClassName="upstream-key-head"
+      rowClassName="upstream-key-row"
+      rowElement="div"
+      headers={['API Key', tr(t, 'keyPriorityShort', '优先级'), t.status, tr(t, 'keyDetails', '详情'), t.action]}
+      items={keys}
+      getItemKey={(key) => key.id}
+      empty={<Empty t={t} />}
+      renderRow={(key) => {
         const isUpdatingStatus = updatingKeyStatusId === key.id;
         return (
-          <div className="upstream-key-row" key={key.id}>
+          <>
             <div>
               {key.name ? <span className="upstream-key-name">{key.name}</span> : null}
               <strong>{key.keyPreview}</strong>
               <span>{agentTypeLabel(key.agentType)}</span>
             </div>
+            <span className="upstream-key-priority">{key.sortOrder}</span>
             <span className={upstreamKeyStatusClassName(key)}>{upstreamKeyStatusLabel(key, t)}</span>
             <div className="upstream-key-meta">
               <span>
@@ -62,9 +70,9 @@ export function UpstreamKeyList({
                 <Trash2 size={16} />
               </button>
             </div>
-          </div>
+          </>
         );
-      })}
-    </div>
+      }}
+    />
   );
 }

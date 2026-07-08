@@ -49,7 +49,7 @@ const upstreamKeySchema = z.object({
   key: z.string().min(1),
   name: z.string().optional(),
   agentType: z.enum(['shared', 'claude-code', 'codex']).optional(),
-  sortOrder: z.coerce.number().int().optional(),
+  sortOrder: z.coerce.number().int().positive().optional(),
   expiresAt: z.string().nullable().optional()
 });
 

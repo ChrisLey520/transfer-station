@@ -8,6 +8,7 @@ import {
   makeId,
   normalizeChannelPriority,
   normalizeOptionalUpstreamUrl,
+  normalizeUpstreamKeyPriority,
   normalizeUpstreamKeyStatus,
   normalizeUpstreamStatus,
   normalizeUpstreamUrl,
@@ -371,7 +372,7 @@ export function cloneUpstreamChannel(id: string, options: { includeKeys?: boolea
           keyPreview: key.key_preview,
           keyCiphertext: key.key_ciphertext,
           status: normalizeUpstreamKeyStatus(key.status),
-          sortOrder: Number(key.sort_order ?? 100),
+          sortOrder: normalizeUpstreamKeyPriority(key.sort_order, 100),
           expiresAt: key.expires_at ?? null,
           createdAt: timestamp,
           updatedAt: timestamp

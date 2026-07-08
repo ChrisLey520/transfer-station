@@ -3,13 +3,14 @@ import { Check, Plus } from 'lucide-react';
 import { LoadingContent } from '../../components/common.js';
 import { tr } from '../../i18n.js';
 import type { UpstreamChannel, UpstreamKeyAgentType, UpstreamKeyDeleteTarget, UpstreamKeyEditTarget } from '../../types.js';
-import { DangerConfirmModal, PermanentKeyFields, type TranslationMap } from './ChannelModalFields.js';
+import { DangerConfirmModal, NumberField, PermanentKeyFields, type TranslationMap } from './ChannelModalFields.js';
 
 export function AddUpstreamKeyModal({
   keyAgentType,
   keyExpiresAt,
   keyIsPermanent,
   keyName,
+  keyPriority,
   keyTarget,
   keyValue,
   savingKey,
@@ -17,6 +18,7 @@ export function AddUpstreamKeyModal({
   setKeyExpiresAt,
   setKeyIsPermanent,
   setKeyName,
+  setKeyPriority,
   setKeyTarget,
   setKeyValue,
   onSubmit,
@@ -26,6 +28,7 @@ export function AddUpstreamKeyModal({
   keyExpiresAt: string;
   keyIsPermanent: boolean;
   keyName: string;
+  keyPriority: number;
   keyTarget: UpstreamChannel;
   keyValue: string;
   savingKey: boolean;
@@ -33,6 +36,7 @@ export function AddUpstreamKeyModal({
   setKeyExpiresAt: (value: string) => void;
   setKeyIsPermanent: (value: boolean) => void;
   setKeyName: (value: string) => void;
+  setKeyPriority: (value: number) => void;
   setKeyTarget: (value: UpstreamChannel | null) => void;
   setKeyValue: (value: string) => void;
   onSubmit: (event: React.FormEvent) => void;
@@ -63,6 +67,7 @@ export function AddUpstreamKeyModal({
           API Key
           <input value={keyValue} onChange={(event) => setKeyValue(event.target.value)} required />
         </label>
+        <NumberField label={tr(t, 'keyPriority', 'Key 优先级（越小越优先）')} value={keyPriority} min="1" step="1" onChange={(value) => setKeyPriority(Math.max(1, Math.trunc(value || 1)))} />
         <PermanentKeyFields
           checked={keyIsPermanent}
           expiresAt={keyExpiresAt}
@@ -89,12 +94,14 @@ export function EditUpstreamKeyModal({
   keyEditExpiresAt,
   keyEditIsPermanent,
   keyEditName,
+  keyEditPriority,
   keyEditTarget,
   keyEditValue,
   savingEditedKey,
   setKeyEditExpiresAt,
   setKeyEditIsPermanent,
   setKeyEditName,
+  setKeyEditPriority,
   setKeyEditTarget,
   setKeyEditValue,
   onSubmit,
@@ -103,12 +110,14 @@ export function EditUpstreamKeyModal({
   keyEditExpiresAt: string;
   keyEditIsPermanent: boolean;
   keyEditName: string;
+  keyEditPriority: number;
   keyEditTarget: UpstreamKeyEditTarget;
   keyEditValue: string;
   savingEditedKey: boolean;
   setKeyEditExpiresAt: (value: string) => void;
   setKeyEditIsPermanent: (value: boolean) => void;
   setKeyEditName: (value: string) => void;
+  setKeyEditPriority: (value: number) => void;
   setKeyEditTarget: (value: UpstreamKeyEditTarget | null) => void;
   setKeyEditValue: (value: string) => void;
   onSubmit: (event: React.FormEvent) => void;
@@ -131,6 +140,7 @@ export function EditUpstreamKeyModal({
           API Key
           <input value={keyEditValue} onChange={(event) => setKeyEditValue(event.target.value)} placeholder={tr(t, 'leaveBlankKeepKey', '留空则不更换 Key')} />
         </label>
+        <NumberField label={tr(t, 'keyPriority', 'Key 优先级（越小越优先）')} value={keyEditPriority} min="1" step="1" onChange={(value) => setKeyEditPriority(Math.max(1, Math.trunc(value || 1)))} />
         <PermanentKeyFields
           checked={keyEditIsPermanent}
           expiresAt={keyEditExpiresAt}

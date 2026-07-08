@@ -1,4 +1,5 @@
 import { ButtonSpinner, Empty } from '../../components/common.js';
+import { DataTable } from '../../components/DataTable.js';
 import { tr } from '../../i18n.js';
 import type { UpstreamModelRate } from '../../types.js';
 import { Trash2 } from 'lucide-react';
@@ -21,32 +22,36 @@ export function ModelRateGroup({
   return (
     <div className="model-rate-group">
       <div className="model-rate-group-title">{title}</div>
-      {rates.length ? (
-        <div className="model-rate-list">
-          {rates.map((rate) => (
-            <div className="model-rate-row" key={rate.id}>
-              <div>
-                <strong>{rate.model}</strong>
-                {rate.isDefault ? <span>{tr(t, 'defaultRate', '默认')}</span> : null}
-              </div>
-              <span>I {rate.inputRatePerMillion}</span>
-              <span>CW {rate.cacheCreationRatePerMillion}</span>
-              <span>CR {rate.cacheReadRatePerMillion}</span>
-              <span>O {rate.outputRatePerMillion}</span>
-              <div className="row-actions">
-                <button type="button" className="secondary-button" onClick={() => onEdit(rate)}>
-                  {tr(t, 'edit', '编辑')}
-                </button>
-                <button type="button" className="icon-button danger" onClick={() => onDelete(rate)} title={t.delete} disabled={Boolean(deletingModelRateId)}>
-                  {deletingModelRateId === rate.id ? <ButtonSpinner size={16} /> : <Trash2 size={16} />}
-                </button>
-              </div>
+      <DataTable
+        className="model-rate-list"
+        headClassName="model-rate-head"
+        rowClassName="model-rate-row"
+        rowElement="div"
+        headers={[t.model, tr(t, 'inputRateShort', '输入'), tr(t, 'cacheWriteRateShort', '缓存写入'), tr(t, 'cacheReadRateShort', '缓存读取'), tr(t, 'outputRateShort', '输出'), t.action]}
+        items={rates}
+        getItemKey={(rate) => rate.id}
+        empty={<Empty t={t} />}
+        renderRow={(rate) => (
+          <>
+            <div>
+              <strong>{rate.model}</strong>
+              {rate.isDefault ? <span>{tr(t, 'defaultRate', '默认')}</span> : null}
             </div>
-          ))}
-        </div>
-      ) : (
-        <Empty t={t} />
-      )}
+            <span>{rate.inputRatePerMillion}</span>
+            <span>{rate.cacheCreationRatePerMillion}</span>
+            <span>{rate.cacheReadRatePerMillion}</span>
+            <span>{rate.outputRatePerMillion}</span>
+            <div className="row-actions">
+              <button type="button" className="secondary-button" onClick={() => onEdit(rate)}>
+                {tr(t, 'edit', '编辑')}
+              </button>
+              <button type="button" className="icon-button danger" onClick={() => onDelete(rate)} title={t.delete} disabled={Boolean(deletingModelRateId)}>
+                {deletingModelRateId === rate.id ? <ButtonSpinner size={16} /> : <Trash2 size={16} />}
+              </button>
+            </div>
+          </>
+        )}
+      />
     </div>
   );
 }

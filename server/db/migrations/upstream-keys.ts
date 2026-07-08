@@ -11,6 +11,12 @@ export function ensureUpstreamKeyColumns() {
   if (!columns.has('name')) {
     db.exec("ALTER TABLE upstream_channel_keys ADD COLUMN name TEXT NOT NULL DEFAULT ''");
   }
+
+  if (!columns.has('sort_order')) {
+    db.exec('ALTER TABLE upstream_channel_keys ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 100');
+  }
+
+  db.exec('CREATE INDEX IF NOT EXISTS idx_upstream_keys_selection ON upstream_channel_keys(channel_group_id, agent_type, status, expires_at, sort_order, created_at)');
 }
 
 export function ensureUpstreamKeyStatusConstraint() {
@@ -85,6 +91,7 @@ export function ensureUpstreamKeyStatusConstraint() {
       DROP TABLE upstream_channel_keys;
       ALTER TABLE upstream_channel_keys_status_migration RENAME TO upstream_channel_keys;
       CREATE INDEX IF NOT EXISTS idx_upstream_keys_group_agent_status ON upstream_channel_keys(channel_group_id, agent_type, status);
+      CREATE INDEX IF NOT EXISTS idx_upstream_keys_selection ON upstream_channel_keys(channel_group_id, agent_type, status, expires_at, sort_order, created_at);
     `);
   });
 
@@ -163,6 +170,7 @@ export function ensureUpstreamKeyScopedUniqueness() {
       DROP TABLE upstream_channel_keys;
       ALTER TABLE upstream_channel_keys_scope_migration RENAME TO upstream_channel_keys;
       CREATE INDEX IF NOT EXISTS idx_upstream_keys_group_agent_status ON upstream_channel_keys(channel_group_id, agent_type, status);
+      CREATE INDEX IF NOT EXISTS idx_upstream_keys_selection ON upstream_channel_keys(channel_group_id, agent_type, status, expires_at, sort_order, created_at);
     `);
   });
 

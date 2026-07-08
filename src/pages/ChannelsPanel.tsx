@@ -43,11 +43,13 @@ export function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersIni
         keyEditExpiresAt={panel.keyEditExpiresAt}
         keyEditIsPermanent={panel.keyEditIsPermanent}
         keyEditName={panel.keyEditName}
+        keyEditPriority={panel.keyEditPriority}
         keyEditTarget={panel.keyEditTarget}
         keyEditValue={panel.keyEditValue}
         keyExpiresAt={panel.keyExpiresAt}
         keyIsPermanent={panel.keyIsPermanent}
         keyName={panel.keyName}
+        keyPriority={panel.keyPriority}
         keyTarget={panel.keyTarget}
         keyValue={panel.keyValue}
         modelRateForm={panel.modelRateForm}
@@ -73,11 +75,13 @@ export function ChannelsPanel({ headers, refreshTick, t }: { headers: HeadersIni
         setKeyEditExpiresAt={panel.setKeyEditExpiresAt}
         setKeyEditIsPermanent={panel.setKeyEditIsPermanent}
         setKeyEditName={panel.setKeyEditName}
+        setKeyEditPriority={panel.setKeyEditPriority}
         setKeyEditTarget={panel.setKeyEditTarget}
         setKeyEditValue={panel.setKeyEditValue}
         setKeyExpiresAt={panel.setKeyExpiresAt}
         setKeyIsPermanent={panel.setKeyIsPermanent}
         setKeyName={panel.setKeyName}
+        setKeyPriority={panel.setKeyPriority}
         setKeyTarget={panel.setKeyTarget}
         setKeyValue={panel.setKeyValue}
         setModelRateForm={panel.setModelRateForm}

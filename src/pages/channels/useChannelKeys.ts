@@ -18,12 +18,14 @@ export function useChannelKeys({
   const [keyTarget, setKeyTarget] = React.useState<UpstreamChannel | null>(null);
   const [keyName, setKeyName] = React.useState('');
   const [keyValue, setKeyValue] = React.useState('');
+  const [keyPriority, setKeyPriority] = React.useState(100);
   const [keyAgentType, setKeyAgentType] = React.useState<UpstreamKeyAgentType>('shared');
   const [keyExpiresAt, setKeyExpiresAt] = React.useState('');
   const [keyIsPermanent, setKeyIsPermanent] = React.useState(true);
   const [keyEditTarget, setKeyEditTarget] = React.useState<UpstreamKeyEditTarget | null>(null);
   const [keyEditName, setKeyEditName] = React.useState('');
   const [keyEditValue, setKeyEditValue] = React.useState('');
+  const [keyEditPriority, setKeyEditPriority] = React.useState(100);
   const [keyEditExpiresAt, setKeyEditExpiresAt] = React.useState('');
   const [keyEditIsPermanent, setKeyEditIsPermanent] = React.useState(true);
   const [keyDeleteTarget, setKeyDeleteTarget] = React.useState<UpstreamKeyDeleteTarget | null>(null);
@@ -37,6 +39,7 @@ export function useChannelKeys({
     setKeyAgentType(channel.useIndependentAgentKeys ? 'claude-code' : 'shared');
     setKeyName('');
     setKeyValue('');
+    setKeyPriority(100);
     setKeyExpiresAt('');
     setKeyIsPermanent(true);
   }
@@ -55,6 +58,7 @@ export function useChannelKeys({
           key: keyValue,
           agentType: keyAgentType,
           status: 'active',
+          sortOrder: keyPriority,
           expiresAt: keyIsPermanent ? null : dateTimeLocalToIso(keyExpiresAt)
         }
       });
@@ -62,6 +66,7 @@ export function useChannelKeys({
       setKeyTarget(null);
       setKeyName('');
       setKeyValue('');
+      setKeyPriority(100);
       setKeyAgentType('shared');
       setKeyExpiresAt('');
       setKeyIsPermanent(true);
@@ -77,6 +82,7 @@ export function useChannelKeys({
     setKeyEditTarget({ channel, key });
     setKeyEditName(key.name || '');
     setKeyEditValue('');
+    setKeyEditPriority(key.sortOrder);
     setKeyEditIsPermanent(!key.expiresAt);
     setKeyEditExpiresAt(dateTimeLocalValue(key.expiresAt));
   }
@@ -89,9 +95,11 @@ export function useChannelKeys({
     const body: {
       name: string;
       key?: string;
+      sortOrder: number;
       expiresAt: string | null;
     } = {
       name: keyEditName,
+      sortOrder: keyEditPriority,
       expiresAt: keyEditIsPermanent ? null : dateTimeLocalToIso(keyEditExpiresAt)
     };
     if (keyEditValue.trim()) {
@@ -110,6 +118,7 @@ export function useChannelKeys({
       setKeyEditTarget(null);
       setKeyEditName('');
       setKeyEditValue('');
+      setKeyEditPriority(100);
       setKeyEditExpiresAt('');
       setKeyEditIsPermanent(true);
       showSuccessToast(tr(t, 'upstreamKeySaved', '上游 Key 已保存。'));
@@ -162,11 +171,13 @@ export function useChannelKeys({
     keyEditExpiresAt,
     keyEditIsPermanent,
     keyEditName,
+    keyEditPriority,
     keyEditTarget,
     keyEditValue,
     keyExpiresAt,
     keyIsPermanent,
     keyName,
+    keyPriority,
     keyTarget,
     keyValue,
     openAddKey,
@@ -180,11 +191,13 @@ export function useChannelKeys({
     setKeyEditExpiresAt,
     setKeyEditIsPermanent,
     setKeyEditName,
+    setKeyEditPriority,
     setKeyEditTarget,
     setKeyEditValue,
     setKeyExpiresAt,
     setKeyIsPermanent,
     setKeyName,
+    setKeyPriority,
     setKeyTarget,
     setKeyValue,
     updateKeyStatus,

@@ -76,6 +76,7 @@ export async function createUpstreamKey({
     key: string;
     agentType: string;
     status: 'active';
+    sortOrder: number;
     expiresAt: string | null;
   };
   headers: HeadersInit;
@@ -102,6 +103,7 @@ export async function updateUpstreamKey({
     name?: string;
     key?: string;
     status?: UpstreamChannelKey['status'];
+    sortOrder?: number;
     expiresAt?: string | null;
   };
   headers: HeadersInit;
