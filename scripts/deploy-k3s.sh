@@ -35,6 +35,7 @@ tar -xzf ~/transfer-station-deploy.tgz -C ${REMOTE_DIR} --strip-components=1
 cd ${REMOTE_DIR}
 sudo docker build --build-arg PUBLIC_BASE_URL=${PUBLIC_BASE_URL} -t relayhub:latest .
 sudo docker save relayhub:latest | sudo k3s ctr images import -
+sudo k3s kubectl apply -f k8s/traefik-letsencrypt.yaml
 sudo k3s kubectl apply -f k8s/relayhub.yaml
 sudo k3s kubectl -n ${NAMESPACE} rollout restart deployment/${DEPLOYMENT_NAME}
 sudo k3s kubectl -n ${NAMESPACE} rollout status deployment/${DEPLOYMENT_NAME} --timeout=180s
@@ -46,10 +47,14 @@ sudo k3s kubectl -n ${NAMESPACE} logs deploy/${DEPLOYMENT_NAME} -c relayhub --ta
 "
 
 echo "==> Checking public health: ${HEALTH_URL}"
-curl -k -I --max-time 15 "${HEALTH_URL}"
+curl -I --max-time 15 "${HEALTH_URL}"
+
+echo "==> Checking public proxy entrypoints"
+curl -I --max-time 15 "${PUBLIC_BASE_URL}/claude-code"
+curl -I --max-time 15 "${PUBLIC_BASE_URL}/codex/v1"
 
 echo "==> Checking SEO endpoints"
-curl -k -I --max-time 15 "${PUBLIC_BASE_URL}/sitemap.xml"
-curl -k -I --max-time 15 "${PUBLIC_BASE_URL}/guide/codex/windows/"
+curl -I --max-time 15 "${PUBLIC_BASE_URL}/sitemap.xml"
+curl -I --max-time 15 "${PUBLIC_BASE_URL}/guide/codex/windows/"
 
 echo "==> Deploy complete"

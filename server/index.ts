@@ -29,6 +29,7 @@ const seedOnStart = process.env.SEED_ON_START === '1' || (process.env.NODE_ENV !
 const pruneUsageLogsOnStart = process.env.PRUNE_USAGE_LOGS_ON_START === '1';
 const rateBucketCleanupIntervalMs = Math.max(10_000, Number(process.env.RATE_BUCKET_CLEANUP_INTERVAL_MS || 60_000));
 const slidingWindowGuard = createSlidingWindowGuard({ cleanupIntervalMs: rateBucketCleanupIntervalMs });
+const dynamicPathPrefixes = ['/api', '/claude-code', '/codex'];
 
 initDb();
 if (seedOnStart) {
@@ -38,6 +39,17 @@ if (pruneUsageLogsOnStart) {
   pruneUsageLogs();
 }
 
+app.set('trust proxy', true);
+app.use((req, res, next) => {
+  if (dynamicPathPrefixes.some((prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`))) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, no-transform');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+    res.setHeader('Vary', 'Authorization, X-Api-Key');
+  }
+  next();
+});
 app.use(cors());
 app.use(express.json({ limit: '12mb' }));
 

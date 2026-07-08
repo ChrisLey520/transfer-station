@@ -268,6 +268,9 @@ async function handleProxyRequest(req: Request, res: Response, agent: AgentType,
           touchKey(key.id);
           res.status(upstream.status);
           res.setHeader('content-type', contentType);
+          res.setHeader('cache-control', 'no-store, no-cache, no-transform');
+          res.setHeader('connection', 'keep-alive');
+          res.setHeader('x-accel-buffering', 'no');
           res.setHeader('x-transfer-station-key', key.keyPreview);
           res.setHeader('x-transfer-station-upstream', 'RelayHub');
           res.setHeader('x-transfer-station-quota-five-hour-remaining', String(quotaCheck.quota.remainingFiveHour));

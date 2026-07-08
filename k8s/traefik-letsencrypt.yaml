@@ -1,0 +1,25 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    podSecurityContext:
+      runAsGroup: 65532
+      runAsNonRoot: true
+      runAsUser: 65532
+      fsGroup: 65532
+      fsGroupChangePolicy: OnRootMismatch
+      seccompProfile:
+        type: RuntimeDefault
+    persistence:
+      enabled: true
+      size: 128Mi
+    certificatesResolvers:
+      le:
+        acme:
+          email: acme@chrisley.site
+          storage: /data/acme.json
+          httpChallenge:
+            entryPoint: web

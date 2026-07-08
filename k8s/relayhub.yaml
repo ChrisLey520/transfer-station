@@ -136,6 +136,8 @@ metadata:
   namespace: relayhub
   annotations:
     traefik.ingress.kubernetes.io/router.priority: "100"
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: le
 spec:
   ingressClassName: traefik
   rules:
@@ -152,4 +154,3 @@ spec:
   tls:
     - hosts:
         - relayhub.chrisley.site
-      secretName: chrisley-origin-tls
