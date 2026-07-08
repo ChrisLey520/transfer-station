@@ -1,4 +1,5 @@
 import { Empty, LoadingContent } from '../../components/common.js';
+import { DataTable } from '../../components/DataTable.js';
 import { tr } from '../../i18n.js';
 import type { ClaimedOrder } from '../../types.js';
 import { fullDate } from '../../utils/time.js';
@@ -36,37 +37,31 @@ export function OrderHistorySection({
         </button>
       </div>
       {isLoadingHistory ? <div className="loading-line" /> : null}
-      {claimedOrders.length ? (
-        <div className="order-history-table">
-          <div className="order-history-head">
-            <span>{tr(t, 'orderNumber', '订单号')}</span>
-            <span>{tr(t, 'taobao', '淘宝')}</span>
-            <span>{tr(t, 'orderItem', '商品')}</span>
-            <span>{tr(t, 'giftCards', '礼品码')}</span>
-            <span>{tr(t, 'claimTime', '领取时间')}</span>
-            <span>{t.status}</span>
-            <span>{t.copy}</span>
-          </div>
-          {claimedOrders.map((order) => {
-            const key = orderKey(order);
-            return (
-              <article className="order-history-row" key={key}>
-                <strong>{order.orderId}</strong>
-                <span>{t[order.platform] || order.platform}</span>
-                <span>{order.title || order.subOrderId}</span>
-                <code>{order.giftCardCode || '-'}</code>
-                <span>{order.claimedAt ? fullDate(order.claimedAt) : '-'}</span>
-                <span className={order.deliveryStatus === 'claimed' ? 'status-code ok' : 'status-code'}>{statusLabel(order.deliveryStatus)}</span>
-                <button type="button" className="icon-button" onClick={() => void onCopyCodes([order], key)} title={t.copy}>
-                  {copiedKey === key ? <Check size={15} /> : <Copy size={15} />}
-                </button>
-              </article>
-            );
-          })}
-        </div>
-      ) : (
-        <Empty t={t} />
-      )}
+      <DataTable
+        className="order-history-table"
+        headClassName="order-history-head"
+        rowClassName="order-history-row"
+        headers={[tr(t, 'orderNumber', '订单号'), tr(t, 'taobao', '淘宝'), tr(t, 'orderItem', '商品'), tr(t, 'giftCards', '礼品码'), tr(t, 'claimTime', '领取时间'), t.status, t.copy]}
+        items={claimedOrders}
+        getItemKey={orderKey}
+        empty={<Empty t={t} />}
+        renderRow={(order) => {
+          const key = orderKey(order);
+          return (
+            <>
+              <strong>{order.orderId}</strong>
+              <span>{t[order.platform] || order.platform}</span>
+              <span>{order.title || order.subOrderId}</span>
+              <code>{order.giftCardCode || '-'}</code>
+              <span>{order.claimedAt ? fullDate(order.claimedAt) : '-'}</span>
+              <span className={order.deliveryStatus === 'claimed' ? 'status-code ok' : 'status-code'}>{statusLabel(order.deliveryStatus)}</span>
+              <button type="button" className="icon-button" onClick={() => void onCopyCodes([order], key)} title={t.copy}>
+                {copiedKey === key ? <Check size={15} /> : <Copy size={15} />}
+              </button>
+            </>
+          );
+        }}
+      />
     </section>
   );
 }

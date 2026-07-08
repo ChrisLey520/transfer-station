@@ -1,4 +1,5 @@
 import { LoadingContent } from '../../components/common.js';
+import { DataTable } from '../../components/DataTable.js';
 import { tr } from '../../i18n.js';
 import type { ClaimedOrder } from '../../types.js';
 import { Check, Copy } from 'lucide-react';
@@ -55,12 +56,18 @@ export function OrderClaimSection({
               {copiedKey === 'claim-result' ? tr(t, 'copiedCodes', '已复制兑换码') : tr(t, 'copyCodes', '复制兑换码')}
             </button>
           </div>
-          {claimResult.map((order) => (
-            <article className="claim-code-row" key={orderKey(order)}>
-              <span>{order.title || order.subOrderId}</span>
-              <code>{order.giftCardCode}</code>
-            </article>
-          ))}
+          <DataTable
+            className="claim-code-list"
+            items={claimResult}
+            getItemKey={orderKey}
+            rowClassName="claim-code-row"
+            renderRow={(order) => (
+              <>
+                <span>{order.title || order.subOrderId}</span>
+                <code>{order.giftCardCode}</code>
+              </>
+            )}
+          />
         </div>
       ) : null}
     </section>

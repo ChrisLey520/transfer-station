@@ -1,4 +1,5 @@
 import { Empty } from '../../components/common.js';
+import { DataTable } from '../../components/DataTable.js';
 import { tr } from '../../i18n.js';
 import type { AdminGiftCard, GiftCardCard } from '../../types.js';
 import { currency } from '../../utils/format.js';
@@ -18,23 +19,17 @@ export function GiftCardRows({
   onRequestRevoke: (card: AdminGiftCard) => void;
   t: Record<string, string>;
 }) {
-  if (!giftCards.length) return <Empty t={t} />;
-
   return (
-    <div className="gift-card-table">
-      <div className="gift-card-table-head">
-        <span>{t.keyValue}</span>
-        <span>{tr(t, 'giftCardType', '礼品卡类型')}</span>
-        <span>{t.plan}</span>
-        <span>{tr(t, 'giftCardAmount', '余额金额')}</span>
-        <span>{t.status}</span>
-        <span>{tr(t, 'createdBy', '创建人')}</span>
-        <span>{tr(t, 'redeemedBy', '使用人')}</span>
-        <span>{t.createdAt}</span>
-        <span>{t.action}</span>
-      </div>
-      {giftCards.map((card) => (
-        <article className="gift-card-row" key={card.code}>
+    <DataTable
+      className="gift-card-table"
+      headClassName="gift-card-table-head"
+      rowClassName="gift-card-row"
+      headers={[t.keyValue, tr(t, 'giftCardType', '礼品卡类型'), t.plan, tr(t, 'giftCardAmount', '余额金额'), t.status, tr(t, 'createdBy', '创建人'), tr(t, 'redeemedBy', '使用人'), t.createdAt, t.action]}
+      items={giftCards}
+      getItemKey={(card) => card.code}
+      empty={<Empty t={t} />}
+      renderRow={(card) => (
+        <>
           <div className="key-secret-cell">
             <code>{card.code}</code>
             <button type="button" className="icon-button compact" onClick={() => onCopy(card.code)} title={t.copy}>
@@ -80,32 +75,34 @@ export function GiftCardRows({
               </button>
             ) : null}
           </div>
-        </article>
-      ))}
-    </div>
+        </>
+      )}
+    />
   );
 }
 
 export function GiftRedemptionTable({ giftCards, className }: { giftCards: GiftCardCard[]; className?: string }) {
-  if (!giftCards.length) return <div className={className ? `table-empty ${className}` : 'table-empty'}>暂无记录</div>;
+  const tableClassName = className ? `gift-card-table ${className}` : 'gift-card-table';
+  const emptyClassName = className ? `table-empty ${className}` : 'table-empty';
+
   return (
-    <div className={className ? `gift-card-table ${className}` : 'gift-card-table'}>
-      <div className="gift-card-table-head">
-        <span>兑换码</span>
-        <span>类型</span>
-        <span>套餐/额度</span>
-        <span>兑换用户</span>
-        <span>兑换时间</span>
-      </div>
-      {giftCards.map((card) => (
-        <article className="gift-card-row" key={card.code}>
+    <DataTable
+      className={tableClassName}
+      headClassName="gift-card-table-head"
+      rowClassName="gift-card-row"
+      headers={['兑换码', '类型', '套餐/额度', '兑换用户', '兑换时间']}
+      items={giftCards}
+      getItemKey={(card) => card.code}
+      empty={<div className={emptyClassName}>暂无记录</div>}
+      renderRow={(card) => (
+        <>
           <code>{card.code}</code>
           <span>{card.type === 'plan' ? '套餐' : '余额'}</span>
           <span>{card.type === 'plan' ? `${card.planName || '-'} / ${card.durationMonths}月` : currency(card.amountCents, 'USD')}</span>
           <span>{card.redeemedByEmail || card.redeemedByUserId || '-'}</span>
           <span>{card.redeemedAt ? formatDateTime(card.redeemedAt) : '-'}</span>
-        </article>
-      ))}
-    </div>
+        </>
+      )}
+    />
   );
 }

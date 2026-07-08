@@ -840,6 +840,11 @@ code {
   background: rgba(var(--surface-rgb), 0.75);
 }
 
+.claim-code-list {
+  display: grid;
+  gap: 10px;
+}
+
 .claim-code-row span {
   color: var(--muted);
   font-size: 12px;

@@ -1,4 +1,5 @@
 import { BreakdownItem, Empty, MetricBreakdownItem } from '../../components/common.js';
+import { DataTable } from '../../components/DataTable.js';
 import { tr } from '../../i18n.js';
 import type { UsageLog } from '../../types.js';
 import { currency, percent } from '../../utils/format.js';
@@ -20,22 +21,17 @@ export function LogRows({
   expandedId?: string | null;
   setExpandedId?: (id: string | null) => void;
 }) {
-  if (!logs.length) return <Empty t={t} className={className} />;
-
   return (
-    <div className={className ? `log-list ${className}` : 'log-list'}>
-      {!compactMode ? (
-        <div className="log-head" aria-hidden="true">
-          <span>{t.model}</span>
-          <span>{tr(t, 'keyName', '密钥名称')}</span>
-          <span>{tr(t, 'channelNumber', '渠道编号')}</span>
-          <span>{t.costUsage}</span>
-          <span>{t.status}</span>
-          <span>{t.requestTime}</span>
-          <span>{t.latency}</span>
-        </div>
-      ) : null}
-      {logs.map((log) => {
+    <DataTable
+      className={className ? `log-list ${className}` : 'log-list'}
+      headClassName="log-head"
+      headAriaHidden
+      rowClassName="log-record"
+      headers={compactMode ? [] : [t.model, tr(t, 'keyName', '密钥名称'), tr(t, 'channelNumber', '渠道编号'), t.costUsage, t.status, t.requestTime, t.latency]}
+      items={logs}
+      getItemKey={(log) => log.id}
+      empty={<Empty t={t} className={className} />}
+      renderRow={(log) => {
         const isSuccess = log.statusCode >= 200 && log.statusCode < 300;
         const isExpanded = expandedId === log.id;
         const toggle = () => setExpandedId?.(isExpanded ? null : log.id);
@@ -43,7 +39,7 @@ export function LogRows({
         const cacheHitRate = cacheBase ? log.cacheReadInputTokens / cacheBase : 0;
 
         return (
-          <article className="log-record" key={log.id}>
+          <>
             <button type="button" className="log-summary" onClick={toggle} aria-expanded={isExpanded}>
               {!compactMode ? <ChevronDown className={isExpanded ? 'log-expand-indicator open' : 'log-expand-indicator'} size={16} /> : null}
               <div>
@@ -75,9 +71,9 @@ export function LogRows({
                 )}
               </div>
             ) : null}
-          </article>
+          </>
         );
-      })}
-    </div>
+      }}
+    />
   );
 }

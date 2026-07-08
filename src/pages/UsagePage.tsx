@@ -1,4 +1,5 @@
 import { Empty, PurchasePromoAlert } from '../components/common.js';
+import { DataTable } from '../components/DataTable.js';
 import { RechargeModal } from '../components/RechargeModal.js';
 import { buildRechargeModalProps } from '../components/toast.js';
 import { Bootstrap, QuotaSnapshot } from '../types.js';
@@ -112,20 +113,24 @@ export function QuotaUsagePanel({ quota, t }: { quota: QuotaSnapshot; t: Record<
   ];
 
   return (
-    <div className="quota-overview-list">
-      {rows.map((row) => {
-        const value = pct(row.used, row.limit);
-        const resetLabel = futureDateLabel(row.resetAt);
+    <DataTable
+      className="quota-overview-list"
+      rowClassName="quota-overview-row"
+      items={rows}
+      getItemKey={(quotaRow) => quotaRow.label}
+      renderRow={(quotaRow) => {
+        const value = pct(quotaRow.used, quotaRow.limit);
+        const resetLabel = futureDateLabel(quotaRow.resetAt);
         return (
-          <article className="quota-overview-row" key={row.label}>
+          <>
             <div className="quota-overview-head">
               <div>
-                <strong>{row.label}</strong>
+                <strong>{quotaRow.label}</strong>
                 <span>
-                  {currency(row.used, 'USD')} / {currency(row.limit, 'USD')}
+                  {currency(quotaRow.used, 'USD')} / {currency(quotaRow.limit, 'USD')}
                 </span>
               </div>
-              <strong>{currency(row.remaining, 'USD')}</strong>
+              <strong>{currency(quotaRow.remaining, 'USD')}</strong>
             </div>
             <div className="bar-track">
               <div style={{ width: `${Math.min(value, 100)}%`, background: usageColor(value) }} />
@@ -133,13 +138,13 @@ export function QuotaUsagePanel({ quota, t }: { quota: QuotaSnapshot; t: Record<
             <div className="quota-overview-foot">
               <span>{Math.round(value)}%</span>
               <span>
-                {t.remaining}: {currency(row.remaining, 'USD')}
+                {t.remaining}: {currency(quotaRow.remaining, 'USD')}
                 {resetLabel ? ` · ${t.nextReset}: ${resetLabel}` : ''}
               </span>
             </div>
-          </article>
+          </>
         );
-      })}
-    </div>
+      }}
+    />
   );
 }

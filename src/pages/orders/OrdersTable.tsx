@@ -1,19 +1,22 @@
+import { DataTable } from '../../components/DataTable.js';
 import type { ClaimedOrder } from '../../types.js';
 import { formatDateTime } from '../../utils/time.js';
 
 export function OrdersTable({ orders, className }: { orders: ClaimedOrder[]; className?: string }) {
-  if (!orders.length) return <div className={className ? `table-empty ${className}` : 'table-empty'}>暂无记录</div>;
+  const tableClassName = className ? `gift-card-table ${className}` : 'gift-card-table';
+  const emptyClassName = className ? `table-empty ${className}` : 'table-empty';
+
   return (
-    <div className={className ? `gift-card-table ${className}` : 'gift-card-table'}>
-      <div className="gift-card-table-head">
-        <span>ID</span>
-        <span>商品</span>
-        <span>礼品码</span>
-        <span>状态</span>
-        <span>领取时间</span>
-      </div>
-      {orders.map((order) => (
-        <article className="gift-card-row" key={`${order.orderId}-${order.subOrderId || ''}`}>
+    <DataTable
+      className={tableClassName}
+      headClassName="gift-card-table-head"
+      rowClassName="gift-card-row"
+      headers={['ID', '商品', '礼品码', '状态', '领取时间']}
+      items={orders}
+      getItemKey={(order) => `${order.orderId}-${order.subOrderId || ''}`}
+      empty={<div className={emptyClassName}>暂无记录</div>}
+      renderRow={(order) => (
+        <>
           <code>
             {order.orderId}
             {order.subOrderId ? `/${order.subOrderId}` : ''}
@@ -22,8 +25,8 @@ export function OrdersTable({ orders, className }: { orders: ClaimedOrder[]; cla
           <code>{order.giftCardCode || '-'}</code>
           <span>{order.deliveryStatus}</span>
           <span>{order.claimedAt ? formatDateTime(order.claimedAt) : '-'}</span>
-        </article>
-      ))}
-    </div>
+        </>
+      )}
+    />
   );
 }

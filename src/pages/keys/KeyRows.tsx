@@ -1,4 +1,5 @@
 import { ButtonSpinner, Empty } from '../../components/common.js';
+import { DataTable } from '../../components/DataTable.js';
 import type { ApiKey, QuotaSnapshot } from '../../types.js';
 import { currency, pct, usageColor } from '../../utils/format.js';
 import { fullDate } from '../../utils/time.js';
@@ -16,31 +17,26 @@ type KeyRowsProps = {
 };
 
 export function KeyRows({ keys, t, copiedId, copyingKeyId, onCopy, onUse, onCreate, onRevoke }: KeyRowsProps) {
-  if (!keys.length) {
-    return (
-      <Empty t={t} className="key-table-empty">
-        <button type="button" className="primary-button" onClick={onCreate}>
-          <Plus size={17} />
-          {t.createKey}
-        </button>
-      </Empty>
-    );
-  }
-
   return (
-    <div className="key-table">
-      <div className="key-table-head">
-        <span>{t.keyName}</span>
-        <span>{t.keyValue}</span>
-        <span>{t.createdAt}</span>
-        <span>{t.lastUsed}</span>
-        <span>{t.todayUsage}</span>
-        <span>{t.action}</span>
-      </div>
-      {keys.map((apiKey) => {
+    <DataTable
+      className="key-table"
+      headClassName="key-table-head"
+      rowClassName="key-table-row"
+      headers={[t.keyName, t.keyValue, t.createdAt, t.lastUsed, t.todayUsage, t.action]}
+      items={keys}
+      getItemKey={(apiKey) => apiKey.id}
+      empty={
+        <Empty t={t} className="key-table-empty">
+          <button type="button" className="primary-button" onClick={onCreate}>
+            <Plus size={17} />
+            {t.createKey}
+          </button>
+        </Empty>
+      }
+      renderRow={(apiKey) => {
         const isCopying = copyingKeyId === apiKey.id;
         return (
-          <article className="key-table-row" key={apiKey.id}>
+          <>
             <div className="key-main">
               <div>
                 <strong>{apiKey.name || '-'}</strong>
@@ -64,10 +60,10 @@ export function KeyRows({ keys, t, copiedId, copyingKeyId, onCopy, onUse, onCrea
                 <Trash2 size={16} />
               </button>
             </div>
-          </article>
+          </>
         );
-      })}
-    </div>
+      }}
+    />
   );
 }
 

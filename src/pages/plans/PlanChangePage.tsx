@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable.js';
 import { upgradePlans } from '../../config/purchase.js';
 import type { UpgradePlan } from '../../types.js';
 import { currencyNoDecimals, dollarsToCents } from '../../utils/format.js';
@@ -25,9 +26,12 @@ export function PlanChangePage({
         </div>
       </section>
 
-      <div className="upgrade-plan-grid">
-        {upgradePlans.map((plan) => (
-          <article className={plan.recommended ? 'upgrade-card recommended' : 'upgrade-card'} key={plan.id}>
+      <DataTable
+        className="upgrade-plan-grid"
+        items={upgradePlans}
+        getItemKey={(plan) => plan.id}
+        renderItem={(plan) => (
+          <article className={plan.recommended ? 'upgrade-card recommended' : 'upgrade-card'}>
             {plan.recommended ? <div className="recommended-badge">{t.recommendedUpgrade}</div> : null}
             <div className="upgrade-card-head">
               <h2>{plan.name}</h2>
@@ -66,8 +70,8 @@ export function PlanChangePage({
               ))}
             </ul>
           </article>
-        ))}
-      </div>
+        )}
+      />
       <p className="upgrade-footnote">{t.planFootnote}</p>
     </section>
   );

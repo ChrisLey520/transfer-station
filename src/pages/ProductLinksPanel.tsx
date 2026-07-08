@@ -1,4 +1,5 @@
 import { LoadingContent } from '../components/common.js';
+import { DataTable } from '../components/DataTable.js';
 import { showErrorToast, showSuccessToast } from '../components/toast.js';
 import { creditProductOptions, defaultPurchaseLinks, planProductOptions, productLinkUrl, purchaseChannels } from '../config/purchase.js';
 import { tr } from '../i18n.js';
@@ -108,9 +109,12 @@ export function ProductLinksPanel({
           </button>
         </div>
         {loading ? <div className="loading-line" /> : null}
-        <div className="product-link-list">
-          {productRows.map((option) => (
-            <article className="product-link-card" key={`${option.itemType}-${option.itemId}`}>
+        <DataTable
+          className="product-link-list"
+          items={productRows}
+          getItemKey={(option) => `${option.itemType}-${option.itemId}`}
+          renderItem={(option) => (
+            <article className="product-link-card">
               <div className="product-link-title">
                 <span>{option.itemType === 'plan' ? tr(t, 'purchasePlanTitle', '套餐') : tr(t, 'purchaseCreditTitle', '额度')}</span>
                 <strong>{option.name}</strong>
@@ -131,8 +135,8 @@ export function ProductLinksPanel({
                 ))}
               </div>
             </article>
-          ))}
-        </div>
+          )}
+        />
       </form>
     </section>
   );

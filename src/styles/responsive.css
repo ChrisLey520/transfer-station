@@ -147,6 +147,8 @@
 
   .key-table-head,
   .gift-card-table-head,
+  .model-rate-head,
+  .upstream-key-head,
   .order-history-head,
   .log-head {
     display: none;
