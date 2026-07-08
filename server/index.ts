@@ -82,6 +82,12 @@ function shouldNoindexSpaFallback(pathname: string) {
 }
 
 if (process.env.NODE_ENV === 'production') {
+  const homeIndex = path.join(clientDist, 'home', 'index.html');
+  if (existsSync(homeIndex)) {
+    app.get(['/home', '/home/'], (_req, res) => {
+      res.sendFile(homeIndex);
+    });
+  }
   app.use(express.static(clientDist));
   app.get(/.*/, (req, res) => {
     if (shouldNoindexSpaFallback(req.path)) {

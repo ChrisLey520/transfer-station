@@ -6,6 +6,7 @@ const rootDir = process.cwd();
 const distDir = path.join(rootDir, 'dist/client');
 const publicBaseUrl = normalizeBaseUrl(process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || 'https://relayhub.chrisley.site');
 const generatedAt = new Date().toISOString();
+const homePath = '/home/';
 
 const guidePages = [
   {
@@ -66,7 +67,9 @@ async function main() {
   if (normalizedIndexHtml !== indexHtml) {
     await writeFile(indexPath, normalizedIndexHtml, 'utf8');
   }
-  const assetTags = extractAssetTags(normalizedIndexHtml);
+  const styleTags = extractStyleTags(normalizedIndexHtml);
+  const appAssetTags = extractAppAssetTags(normalizedIndexHtml);
+  await writeHtml(homePath, renderHomePage(appAssetTags));
   const guideHtmlPages = [];
 
   for (const page of guidePages) {
@@ -81,7 +84,7 @@ async function main() {
       description: page.description,
       keywords: page.keywords,
       canonicalPath: urlPath,
-      assetTags,
+      assetTags: styleTags,
       body: renderGuideBody({ page, navigation, articleHtml, excerpt })
     });
     await writeHtml(urlPath, html);
@@ -95,7 +98,7 @@ async function main() {
       description: 'RelayHub 向导汇总 Claude Code、Codex、AI 智能体和 API 中转站接入教程，覆盖 MacOS、Linux 与 Windows。',
       keywords: ['RelayHub', '中转站', 'Claude Code', 'Codex', 'AI 智能体', 'AI智能体', 'API 中转站'],
       canonicalPath: '/guide/',
-      assetTags,
+      assetTags: styleTags,
       pageType: 'CollectionPage',
       body: renderGuideIndexBody(guideHtmlPages)
     })
@@ -105,12 +108,124 @@ async function main() {
   await writeText('/robots.txt', renderRobots());
 }
 
+function renderHomePage(assetTags) {
+  const title = 'RelayHub - Claude Code / Codex API 中转站';
+  const description = 'RelayHub 是面向 Claude Code、Codex 和 AI 智能体（AI智能体）的 API 中转站，提供统一接入、密钥管理、用量统计、套餐额度和使用指南。';
+  const canonicalUrl = `${publicBaseUrl}${homePath}`;
+  const socialImageUrl = `${publicBaseUrl}/guide-icon.png`;
+  const structuredData = {
+    '@context': 'https://schema.org',
+    '@graph': [
+      {
+        '@type': 'Organization',
+        '@id': `${publicBaseUrl}/#organization`,
+        name: 'RelayHub',
+        url: `${publicBaseUrl}/`,
+        logo: socialImageUrl
+      },
+      {
+        '@type': 'WebSite',
+        '@id': `${publicBaseUrl}/#website`,
+        name: 'RelayHub',
+        url: `${publicBaseUrl}/`,
+        inLanguage: 'zh-CN',
+        publisher: { '@id': `${publicBaseUrl}/#organization` }
+      },
+      {
+        '@type': 'WebApplication',
+        '@id': `${publicBaseUrl}${homePath}#webapp`,
+        name: 'RelayHub',
+        url: canonicalUrl,
+        applicationCategory: 'DeveloperApplication',
+        operatingSystem: 'Web',
+        description,
+        keywords: ['RelayHub', '中转站', 'Claude Code', 'Codex', 'AI 智能体', 'AI智能体', 'API 中转站'],
+        publisher: { '@id': `${publicBaseUrl}/#organization` }
+      }
+    ]
+  };
+
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="${escapeAttr(description)}" />
+    <meta name="keywords" content="RelayHub,中转站,Claude Code,Codex,AI智能体,AI 智能体,API中转,API 中转站,Claude中转,Codex中转" />
+    <meta name="robots" content="index,follow,max-image-preview:large" />
+    <meta name="theme-color" content="#d89d16" />
+    <link rel="canonical" href="${escapeAttr(canonicalUrl)}" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    ${assetTags}
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:site_name" content="RelayHub" />
+    <meta property="og:title" content="${escapeAttr(title)}" />
+    <meta property="og:description" content="面向 Claude Code、Codex 和 AI 智能体（AI智能体）的 API 中转站，支持统一接入、密钥管理、用量统计和客户端配置指南。" />
+    <meta property="og:url" content="${escapeAttr(canonicalUrl)}" />
+    <meta property="og:image" content="${escapeAttr(socialImageUrl)}" />
+    <meta property="og:image:alt" content="RelayHub Claude Code / Codex API 中转站" />
+    <meta property="og:image:width" content="512" />
+    <meta property="og:image:height" content="512" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="${escapeAttr(title)}" />
+    <meta name="twitter:description" content="RelayHub 提供 Claude Code、Codex 和 AI 智能体（AI智能体）API 中转、密钥管理、用量统计与接入指南。" />
+    <meta name="twitter:image" content="${escapeAttr(socialImageUrl)}" />
+    <script type="application/ld+json">${JSON.stringify(structuredData)}</script>
+    <title>${escapeHtml(title)}</title>
+  </head>
+  <body>
+    ${renderHomeBody()}
+  </body>
+</html>
+`;
+}
+
+function renderHomeBody() {
+  return `<div id="root">
+  <main class="seo-fallback">
+    <section>
+      <img src="/guide-icon.png" alt="" width="66" height="60" />
+      <p>Claude Code / Codex API 满血中转服务</p>
+      <h1>RelayHub - Claude Code / Codex API 中转站</h1>
+      <p>RelayHub 面向 Claude Code、Codex 和 AI 智能体（AI智能体）用户，提供 API 中转站、统一接入、密钥管理、用量统计、套餐额度和客户端配置指南。</p>
+      <section aria-labelledby="seo-features-title">
+        <h2 id="seo-features-title">RelayHub 能解决什么问题</h2>
+        <ul>
+          <li>统一管理 Claude Code 与 Codex 的 API 中转接入地址和客户端密钥。</li>
+          <li>按 5 小时与 7 天周期统计 Token 用量，帮助团队控制智能体调用成本。</li>
+          <li>提供 Claude Code、Codex、CC-Switch、macOS、Windows、Linux 等常见接入指南。</li>
+        </ul>
+      </section>
+      <section aria-labelledby="seo-scenarios-title">
+        <h2 id="seo-scenarios-title">适合的使用场景</h2>
+        <p>如果你需要为个人、团队或自动化任务集中配置 Claude Code / Codex API 中转站，RelayHub 可以提供密钥发放、上游渠道管理、用量日志、套餐额度和公开教程页面。</p>
+      </section>
+      <nav aria-label="RelayHub 指南">
+        <a href="/guide/claude-code/macos">Claude Code MacOS 接入指南</a>
+        <a href="/guide/claude-code/windows">Claude Code Windows 接入指南</a>
+        <a href="/guide/claude-code/linux">Claude Code Linux 接入指南</a>
+        <a href="/guide/codex/macos-linux">Codex MacOS/Linux 接入指南</a>
+        <a href="/guide/codex/windows">Codex Windows 接入指南</a>
+      </nav>
+      <section aria-labelledby="seo-faq-title">
+        <h2 id="seo-faq-title">常见问题</h2>
+        <h3>RelayHub 是什么？</h3>
+        <p>RelayHub 是面向 Claude Code、Codex 和 AI 智能体的 API 中转站，用于统一接入、密钥管理和用量统计。</p>
+        <h3>是否有公开接入文档？</h3>
+        <p>有。站点提供 Claude Code 与 Codex 在 MacOS、Windows、Linux 环境下的静态指南页，便于搜索引擎收录和用户查阅。</p>
+      </section>
+    </section>
+  </main>
+</div>`;
+}
+
 function renderPage({ title, description, keywords, canonicalPath, assetTags, body, pageType = 'TechArticle' }) {
   const canonicalUrl = `${publicBaseUrl}${canonicalPath}`;
   const keywordText = keywords.join(',');
   const socialImageUrl = `${publicBaseUrl}/guide-icon.png`;
   const breadcrumbItems = [
-    { name: '首页', item: `${publicBaseUrl}/` },
+    { name: '首页', item: `${publicBaseUrl}${homePath}` },
     { name: '接入指南', item: `${publicBaseUrl}/guide/` }
   ];
   if (canonicalPath !== '/guide/') {
@@ -260,7 +375,7 @@ function renderGuideIndexBody(pages) {
 function renderStaticSidebar() {
   return `<aside class="sidebar seo-static-sidebar">
   <div class="sidebar-head">
-    <a class="brand-block seo-brand-link" href="/">
+    <a class="brand-block seo-brand-link" href="${homePath}">
       <div class="brand-mark" aria-hidden="true">
         <svg class="brand-mark-icon" viewBox="0 0 44 44" role="img" aria-label="RelayHub">
           <path class="brand-mark-monogram" d="M13.5 33.2V10.9h11.6c5 0 8.2 2.9 8.2 7.3s-3.2 7.3-8.2 7.3H13.5" />
@@ -276,7 +391,7 @@ function renderStaticSidebar() {
     </a>
   </div>
   <nav class="nav-list" aria-label="公开页面">
-    <a class="nav-item" href="/">首页</a>
+    <a class="nav-item" href="${homePath}">首页</a>
     <a class="nav-item active" href="/guide/">接入指南</a>
     <a class="nav-item" href="/dashboard">登录管理台</a>
   </nav>
@@ -289,7 +404,7 @@ function renderStaticTopbar() {
     <div class="topbar-title"><h1>RelayHub 中转站指南</h1></div>
   </div>
   <div class="topbar-actions">
-    <a class="secondary-button" href="/">首页</a>
+    <a class="secondary-button" href="${homePath}">首页</a>
     <a class="primary-button" href="/dashboard">登录</a>
   </div>
 </header>`;
@@ -313,7 +428,7 @@ function renderOsLinks(currentPage) {
 
 function renderSitemap(pages) {
   const urls = [
-    { loc: '/', priority: '1.0' },
+    { loc: homePath, priority: '1.0' },
     { loc: '/guide/', priority: '0.9' },
     ...pages.map((page) => ({ loc: page.urlPath, priority: '0.8' }))
   ];
@@ -536,9 +651,17 @@ function stripMarkdownTokens(text) {
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
 }
 
-function extractAssetTags(indexHtml) {
+function extractStyleTags(indexHtml) {
   const tags = [];
   for (const match of indexHtml.matchAll(/<link rel="stylesheet"[^>]+>/g)) {
+    tags.push(match[0]);
+  }
+  return tags.join('\n    ');
+}
+
+function extractAppAssetTags(indexHtml) {
+  const tags = [];
+  for (const match of indexHtml.matchAll(/<script type="module"[^>]*><\/script>|<link rel="(?:stylesheet|modulepreload)"[^>]+>/g)) {
     tags.push(match[0]);
   }
   return tags.join('\n    ');

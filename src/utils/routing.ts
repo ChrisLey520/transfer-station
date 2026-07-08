@@ -1,5 +1,7 @@
 import { PlanView, Tab } from '../types.js';
 
+export const publicHomePath = '/home';
+
 export const routeTabSegments: Record<Tab, string> = {
   dashboard: 'dashboard',
   keys: 'keys',
@@ -47,7 +49,8 @@ export function readHistoryRoute(): { tab: Tab; planView: PlanView; userId?: str
 }
 
 export function isPublicHomeRoute() {
-  return !window.location.hash && window.location.pathname === '/';
+  const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
+  return !window.location.hash && pathname === publicHomePath;
 }
 
 export function isPublicGuideRoute() {
