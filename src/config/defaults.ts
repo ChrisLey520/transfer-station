@@ -38,6 +38,8 @@ export const defaultUser: UserProfile = {
   id: '',
   email: '',
   role: 'member',
+  status: 'active',
+  remark: null,
   displayName: null,
   createdAt: '',
   updatedAt: ''

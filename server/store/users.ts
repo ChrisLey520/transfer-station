@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { customAlphabet } from 'nanoid';
 import { db, nowIso } from '../db.js';
-import type { Announcement, User, UserRole } from '../types.js';
+import type { Announcement, User, UserRole, UserStatus } from '../types.js';
 import { ensureAccountState } from './accounts.js';
 
 const makeId = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 16);
@@ -26,6 +26,8 @@ function mapUser(row: any): User {
     id: row.id,
     email: row.email,
     role: normalizeUserRole(row.role),
+    status: normalizeUserStatus(row.status),
+    remark: row.remark ?? null,
     displayName: row.display_name,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -34,6 +36,10 @@ function mapUser(row: any): User {
 
 function normalizeUserRole(role: unknown): UserRole {
   return role === 'admin' ? 'admin' : 'member';
+}
+
+function normalizeUserStatus(status: unknown): UserStatus {
+  return status === 'banned' ? 'banned' : 'active';
 }
 
 function configuredAdminEmails() {
@@ -378,6 +384,33 @@ export function resetUserPassword(userId: string) {
   const password = makeTemporaryPassword();
   const user = updateUserPassword(userId, password);
   return { user, password };
+}
+
+export function updateUserStatus(userId: string, input: { status: UserStatus; remark?: string | null }) {
+  const targetUser = getUserById(userId);
+  if (!targetUser) {
+    throw new Error('用户不存在。');
+  }
+
+  const status = normalizeUserStatus(input.status);
+  const remark = status === 'banned' ? (input.remark || '').trim() || null : null;
+  const updatedAt = nowIso();
+  db.prepare(
+    `
+    UPDATE users
+    SET status = @status,
+      remark = @remark,
+      updated_at = @updatedAt
+    WHERE id = @userId
+  `
+  ).run({
+    userId,
+    status,
+    remark,
+    updatedAt
+  });
+
+  return getUserDetail(userId)!;
 }
 
 export function getUserById(userId: string): User | null {

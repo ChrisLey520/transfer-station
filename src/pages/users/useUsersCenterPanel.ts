@@ -1,6 +1,6 @@
 import React from 'react';
-import { showErrorToast } from '../../components/toast.js';
-import type { UserListPage } from '../../types.js';
+import { showErrorToast, showSuccessToast } from '../../components/toast.js';
+import type { UserListItem, UserListPage } from '../../types.js';
 import { readJsonResponse, responseErrorMessage, unknownErrorMessage } from '../../utils/api.js';
 
 export type UserSortField = 'freeCreditCents' | 'createdAt';
@@ -17,6 +17,7 @@ export function useUsersCenterPanel({ headers, refreshTick, t }: { headers: Head
   const [isSearching, setIsSearching] = React.useState(false);
   const [resettingUserId, setResettingUserId] = React.useState<string | null>(null);
   const [sortLoadingField, setSortLoadingField] = React.useState<UserSortField | null>(null);
+  const [updatingUserStatusId, setUpdatingUserStatusId] = React.useState<string | null>(null);
 
   const loadUsers = React.useCallback(async () => {
     setLoading(true);
@@ -89,6 +90,38 @@ export function useUsersCenterPanel({ headers, refreshTick, t }: { headers: Head
     }
   }
 
+  async function updateUserStatus(userId: string, status: UserListItem['status'], remark?: string) {
+    if (updatingUserStatusId) return null;
+    setUpdatingUserStatusId(userId);
+    try {
+      const response = await fetch(`/api/admin/users/${userId}/status`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ status, remark })
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        showErrorToast(responseErrorMessage(response, payload, t.requestFailed));
+        return null;
+      }
+
+      const user = (payload as { user?: UserListItem }).user;
+      if (user) {
+        setPageData((current) => ({
+          ...current,
+          users: current.users.map((entry) => (entry.id === user.id ? user : entry))
+        }));
+      }
+      showSuccessToast(status === 'banned' ? '用户已封禁' : '用户已解封');
+      return user || null;
+    } catch (error) {
+      showErrorToast(unknownErrorMessage(error, t.requestFailed));
+      return null;
+    } finally {
+      setUpdatingUserStatusId(null);
+    }
+  }
+
   return {
     isSearching,
     loading,
@@ -102,6 +135,8 @@ export function useUsersCenterPanel({ headers, refreshTick, t }: { headers: Head
     sortLoadingField,
     sortOrder,
     submitSearch,
-    toggleSort
+    toggleSort,
+    updateUserStatus,
+    updatingUserStatusId
   };
 }

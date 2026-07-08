@@ -1,6 +1,7 @@
 export type Language = 'zh-CN' | 'zh-TW' | 'en';
 
 export type UserRole = 'admin' | 'member';
+export type UserStatus = 'active' | 'banned';
 export type AgentType = 'claude-code' | 'codex';
 export type UpstreamKeyAgentType = 'shared' | AgentType;
 export type PurchaseChannelId = 'taobao' | 'xianyu';
@@ -10,6 +11,8 @@ export type User = {
   id: string;
   email: string;
   role: UserRole;
+  status: UserStatus;
+  remark: string | null;
   displayName: string | null;
   createdAt: string;
   updatedAt: string;
@@ -178,6 +181,8 @@ export type KeyWithPlan = ApiKeyRecord & {
   planName: string;
   fiveHourTokenLimit: number;
   weeklyTokenLimit: number;
+  userStatus: UserStatus;
+  userRemark: string | null;
 };
 
 export type KeyListItem = Omit<ApiKeyRecord, 'keyHash' | 'keyCiphertext'> & {

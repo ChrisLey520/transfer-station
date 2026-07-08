@@ -1,7 +1,7 @@
 import { customAlphabet } from 'nanoid';
 import { db, mapKey, mapPlan, nowIso } from '../db.js';
 import { createApiKey, decryptKey, encryptKey, hashKey, previewKey } from '../crypto.js';
-import type { ApiKeyRecord, KeyListItem, KeyWithPlan, Plan } from '../types.js';
+import type { ApiKeyRecord, KeyListItem, KeyWithPlan, Plan, UserStatus } from '../types.js';
 import { ensureAccountState } from './accounts.js';
 import { getPlanQuotaWindowUsage, getQuotaSnapshot } from './usage.js';
 
@@ -12,6 +12,10 @@ const apiKeyTouchedAt = new Map<string, number>();
 function getPlan(id: string): Plan | null {
   const row = db.prepare('SELECT * FROM plans WHERE id = ?').get(id);
   return row ? mapPlan(row) : null;
+}
+
+function normalizeKeyUserStatus(status: unknown): UserStatus {
+  return status === 'banned' ? 'banned' : 'active';
 }
 
 function getKeyUsageSnapshot(apiKeyId: string) {
@@ -250,20 +254,31 @@ export function getKeyByRawKey(rawKey: string): KeyWithPlan | null {
   const row = db
     .prepare(
       `
-      SELECT api_keys.*, plans.name as plan_name, plans.five_hour_token_limit, plans.weekly_token_limit
+      SELECT
+        api_keys.*,
+        plans.name as plan_name,
+        plans.five_hour_token_limit,
+        plans.weekly_token_limit,
+        users.status as user_status,
+        users.remark as user_remark
       FROM api_keys
       JOIN plans ON plans.id = api_keys.plan_id
+      JOIN users ON users.id = api_keys.user_id
       WHERE api_keys.id = ?
         AND api_keys.user_id IS NOT NULL
     `
     )
     .get(mapped.id) as any;
 
+  if (!row) return null;
+
   return {
     ...mapKey(row),
     planName: row.plan_name,
     fiveHourTokenLimit: row.five_hour_token_limit,
-    weeklyTokenLimit: row.weekly_token_limit
+    weeklyTokenLimit: row.weekly_token_limit,
+    userStatus: normalizeKeyUserStatus(row.user_status),
+    userRemark: row.user_remark ?? null
   };
 }
 

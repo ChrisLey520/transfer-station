@@ -81,6 +81,11 @@ export function authProxyKey(req: Request, res: Response): KeyWithPlan | null {
     return null;
   }
 
+  if (key.userStatus === 'banned') {
+    res.status(403).json({ type: 'error', error: { type: 'permission_error', message: '该用户已被封禁。' } });
+    return null;
+  }
+
   if (key.status !== 'active') {
     res.status(403).json({ type: 'error', error: { type: 'permission_error', message: `API key is ${key.status}` } });
     return null;
@@ -99,6 +104,11 @@ export function authStatusKey(req: Request, res: Response, options: { allowQuery
   const key = getKeyByRawKey(rawKey);
   if (!key) {
     res.status(401).json({ ok: false, error: 'Invalid API key' });
+    return null;
+  }
+
+  if (key.userStatus === 'banned') {
+    res.status(403).json({ ok: false, error: '该用户已被封禁。', status: key.userStatus });
     return null;
   }
 

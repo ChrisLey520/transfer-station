@@ -11,6 +11,7 @@ import {
   listUsageLogs,
   listUsers,
   resetUserPassword,
+  updateUserStatus,
   usageSummaryForUser
 } from '../store.js';
 
@@ -89,6 +90,30 @@ export function registerActivityRoutes(app: Express) {
       res.json(resetUserPassword(targetUser.id));
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : '重置密码失败。' });
+    }
+  });
+
+  app.patch('/api/admin/users/:id/status', adminGuard, (req, res) => {
+    const targetUser = getUserDetail(routeParam(req.params.id));
+    if (!targetUser) {
+      res.status(404).json({ error: '用户不存在。' });
+      return;
+    }
+
+    const schema = z.object({
+      status: z.enum(['active', 'banned']),
+      remark: z.string().max(1000).optional().nullable()
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    try {
+      res.json({ user: updateUserStatus(targetUser.id, parsed.data) });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : '更新用户状态失败。' });
     }
   });
 

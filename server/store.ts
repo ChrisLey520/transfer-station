@@ -13,7 +13,8 @@ export {
   loginUser,
   registerUser,
   resetUserPassword,
-  saveAnnouncement
+  saveAnnouncement,
+  updateUserStatus
 } from './store/users.js';
 
 export { creditProductCatalog } from './store/catalog.js';

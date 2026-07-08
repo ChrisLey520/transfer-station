@@ -25,6 +25,8 @@ export type UserProfile = {
   id: string;
   email: string;
   role: 'admin' | 'member';
+  status: 'active' | 'banned';
+  remark: string | null;
   displayName: string | null;
   createdAt: string;
   updatedAt: string;
