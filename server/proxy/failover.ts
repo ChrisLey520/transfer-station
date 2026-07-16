@@ -68,8 +68,13 @@ const monthIndexes: Record<string, number> = {
   december: 11
 };
 
-function yearInOffsetTimezone(now: number, offsetMinutes: number) {
-  return new Date(now + offsetMinutes * 60 * 1000).getUTCFullYear();
+function datePartsInOffsetTimezone(now: number, offsetMinutes: number) {
+  const shifted = new Date(now + offsetMinutes * 60 * 1000);
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth(),
+    day: shifted.getUTCDate()
+  };
 }
 
 function parseUtcOffset(hoursText: string, minutesText?: string) {
@@ -87,22 +92,21 @@ function parseTextResetValue(value: unknown): string | null {
   if (!text) return null;
 
   const match = text.match(
-    /\b(?:will\s+)?(?:reset|resets|retry|available)\b[\s\S]*?\bon\s+([A-Za-z]{3,9})\s+(\d{1,2})(?:,?\s+(\d{4}))?\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?\s*\(\s*UTC\s*([+-]\d{1,2})(?::?(\d{2}))?\s*\)/i
+    /\b(?:will\s+)?(?:reset|resets|retry|available)\b[\s\S]*?\bon\s+(?:(today|tomorrow)|([A-Za-z]{3,9})\s+(\d{1,2})(?:,?\s+(\d{4}))?)\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?\s*\(\s*UTC\s*([+-]\d{1,2})(?::?(\d{2}))?\s*\)/i
   );
   if (!match) return null;
 
-  const month = monthIndexes[match[1].toLowerCase()];
-  const day = Number(match[2]);
-  const explicitYear = match[3] ? Number(match[3]) : null;
-  let hour = Number(match[4]);
-  const minute = match[5] ? Number(match[5]) : 0;
-  const meridiem = match[6]?.toUpperCase();
-  const offsetMinutes = parseUtcOffset(match[7], match[8]);
+  const relativeDay = match[1]?.toLowerCase() ?? null;
+  const month = relativeDay ? null : monthIndexes[match[2].toLowerCase()];
+  const day = relativeDay ? null : Number(match[3]);
+  const explicitYear = match[4] ? Number(match[4]) : null;
+  let hour = Number(match[5]);
+  const minute = match[6] ? Number(match[6]) : 0;
+  const meridiem = match[7]?.toUpperCase();
+  const offsetMinutes = parseUtcOffset(match[8], match[9]);
   if (
-    month === undefined ||
-    !Number.isInteger(day) ||
-    day < 1 ||
-    day > 31 ||
+    (!relativeDay &&
+      (month === undefined || !Number.isInteger(day) || (day as number) < 1 || (day as number) > 31)) ||
     !Number.isInteger(hour) ||
     !Number.isInteger(minute) ||
     minute < 0 ||
@@ -120,11 +124,21 @@ function parseTextResetValue(value: unknown): string | null {
   }
 
   const now = Date.now();
-  let year = explicitYear ?? yearInOffsetTimezone(now, offsetMinutes);
-  let timestamp = Date.UTC(year, month, day, hour, minute) - offsetMinutes * 60 * 1000;
-  if (!explicitYear && timestamp <= now) {
-    year += 1;
-    timestamp = Date.UTC(year, month, day, hour, minute) - offsetMinutes * 60 * 1000;
+  const todayParts = datePartsInOffsetTimezone(now, offsetMinutes);
+  let timestamp: number;
+  if (relativeDay) {
+    const dayOffset = relativeDay === 'tomorrow' ? 1 : 0;
+    timestamp =
+      Date.UTC(todayParts.year, todayParts.month, todayParts.day + dayOffset, hour, minute) - offsetMinutes * 60 * 1000;
+  } else {
+    let year = explicitYear ?? todayParts.year;
+    timestamp = Date.UTC(year, month as number, day as number, hour, minute) - offsetMinutes * 60 * 1000;
+    // 无年份且时间已过:仅当差距接近一年(跨年场景)才推到下一年;
+    // 差距很小说明只是重置时间刚过或时钟偏差,保留原始时间即可。
+    if (!explicitYear && timestamp <= now && now - timestamp > 30 * 24 * 60 * 60 * 1000) {
+      year += 1;
+      timestamp = Date.UTC(year, month as number, day as number, hour, minute) - offsetMinutes * 60 * 1000;
+    }
   }
 
   const date = new Date(timestamp);
@@ -139,33 +153,23 @@ function nestedValue(source: unknown, pathValue: string) {
 }
 
 export function recoveryUntilFromUpstream(headers: Headers, payload: unknown) {
-  const headerNames = [
-    'retry-after',
-    'x-ratelimit-reset',
-    'x-ratelimit-reset-requests',
-    'x-ratelimit-reset-tokens',
-    'x-rate-limit-reset',
-    'x-quota-reset'
-  ];
-  for (const name of headerNames) {
-    const parsed = parseRetryValue(headers.get(name));
-    if (parsed) return parsed;
-  }
-
+  // 优先使用响应体:结构化字段和报错消息文本给出的是精确的重置时间,
+  // 且消息原文会一并展示给用户;retry-after 等头部往往只是粗略的相对秒数,
+  // 放最后兜底,避免与消息里的时间不一致。
   const jsonPaths = [
-    'retry_after',
-    'retryAfter',
-    'retry_after_ms',
     'reset_at',
     'resetAt',
     'resets_at',
     'quota_reset_at',
-    'error.retry_after',
-    'error.retryAfter',
-    'error.retry_after_ms',
     'error.reset_at',
     'error.resetAt',
-    'error.resets_at'
+    'error.resets_at',
+    'retry_after',
+    'retryAfter',
+    'retry_after_ms',
+    'error.retry_after',
+    'error.retryAfter',
+    'error.retry_after_ms'
   ];
   for (const pathValue of jsonPaths) {
     const value = nestedValue(payload, pathValue);
@@ -181,6 +185,19 @@ export function recoveryUntilFromUpstream(headers: Headers, payload: unknown) {
   const textPaths = ['error', 'message', 'detail', 'error.message', 'error.detail'];
   for (const pathValue of textPaths) {
     const parsed = parseTextResetValue(nestedValue(payload, pathValue));
+    if (parsed) return parsed;
+  }
+
+  const headerNames = [
+    'retry-after',
+    'x-ratelimit-reset',
+    'x-ratelimit-reset-requests',
+    'x-ratelimit-reset-tokens',
+    'x-rate-limit-reset',
+    'x-quota-reset'
+  ];
+  for (const name of headerNames) {
+    const parsed = parseRetryValue(headers.get(name));
     if (parsed) return parsed;
   }
 

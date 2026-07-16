@@ -81,7 +81,10 @@ export function normalizeUpstreamKeyStatus(value: unknown): UpstreamChannelKey['
 
 function parseResetTimeCandidate(value: unknown): string | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
-    const ms = value > 1e12 ? value : value * 1000;
+    if (value <= 0) return null;
+    // 与 failover.ts 的 parseRetryValue 保持一致:
+    // 毫秒级时间戳 / 秒级时间戳 / 小数值视为相对秒数(如 retry_after: 300)
+    const ms = value > 1e12 ? value : value > 1e9 ? value * 1000 : Date.now() + value * 1000;
     const date = new Date(ms);
     return Number.isNaN(date.getTime()) ? null : date.toISOString();
   }
