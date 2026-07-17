@@ -98,6 +98,8 @@ export function initDb() {
       current_plan_name TEXT,
       current_plan_rank INTEGER NOT NULL DEFAULT 0,
       plan_expires_at TEXT,
+      five_hour_cycle_start_at TEXT,
+      weekly_cycle_start_at TEXT,
       updated_at TEXT NOT NULL
     );
 

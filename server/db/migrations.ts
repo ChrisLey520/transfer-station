@@ -5,11 +5,12 @@ import { ensureGiftCardOwnerColumn } from './migrations/gift-cards.js';
 import { ensurePlatformOrderClaimColumns, ensureTaobaoIntegrationTables } from './migrations/taobao.js';
 import { ensureUpstreamChannelColumns, ensureUpstreamChannelStatusConstraint } from './migrations/upstream-channels.js';
 import { ensureUpstreamKeyColumns, ensureUpstreamKeyScopedUniqueness, ensureUpstreamKeyStatusConstraint } from './migrations/upstream-keys.js';
-import { ensureUsageLogMoneyColumns } from './migrations/usage.js';
+import { ensureAccountQuotaCycleColumns, ensureUsageLogMoneyColumns } from './migrations/usage.js';
 import { ensureUserRoleColumn } from './migrations/users.js';
 
 export function runMigrations() {
   ensureUsageLogMoneyColumns();
+  ensureAccountQuotaCycleColumns();
   ensureUserRoleColumn();
   ensureAnnouncementTablesShape();
   ensureApiKeySecretColumns();

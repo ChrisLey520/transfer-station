@@ -2,7 +2,7 @@ import { customAlphabet } from 'nanoid';
 import { db, mapLog, nowIso } from '../db.js';
 import { formatBeijingDateTime } from '../time.js';
 import type { KeyWithPlan, QuotaSnapshot, UsageLog } from '../types.js';
-import { ensureAccountState } from './accounts.js';
+import { ensureAccountState, setAccountQuotaCycleStart, type AccountState } from './accounts.js';
 
 const makeId = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 16);
 const fiveHoursMs = 5 * 60 * 60 * 1000;
@@ -41,6 +41,8 @@ type QuotaScope = {
   weeklyLimit: number;
 };
 
+type QuotaWindowKind = 'fiveHour' | 'weekly';
+
 type QuotaWindowUsage = {
   costCents: number;
   tokens: number;
@@ -48,10 +50,12 @@ type QuotaWindowUsage = {
   cycleStartAt: string | null;
 };
 
-type QuotaWindowRow = {
-  created_at: string;
-  total_cost_cents: number;
-  total_tokens: number;
+const quotaWindowConfig: Record<
+  QuotaWindowKind,
+  { windowMs: number; field: 'fiveHourCycleStartAt' | 'weeklyCycleStartAt' }
+> = {
+  fiveHour: { windowMs: fiveHoursMs, field: 'fiveHourCycleStartAt' },
+  weekly: { windowMs: sevenDaysMs, field: 'weeklyCycleStartAt' }
 };
 
 export function pruneUsageLogs() {
@@ -137,72 +141,80 @@ export function quotaResetAt(
   return new Date(now + windowMs).toISOString();
 }
 
-export function getPlanQuotaWindowUsage(input: {
+function activeCycleStartMs(value: string | null | undefined, windowMs: number, now: number) {
+  if (!value) return null;
+  const startMs = Date.parse(value);
+  if (!Number.isFinite(startMs) || startMs > now) return null;
+  if (startMs + windowMs <= now) return null;
+  return startMs;
+}
+
+// A quota cycle starts at the first successful plan consumption while no
+// cycle is active and lasts exactly one window. Expired anchors are cleared
+// so the next successful plan consumption opens a fresh cycle.
+export function getAccountQuotaCycles(userId: string, now: number, account?: AccountState) {
+  const state = account ?? ensureAccountState(userId);
+  const cleared: Partial<{ fiveHourCycleStartAt: string | null; weeklyCycleStartAt: string | null }> = {};
+
+  const resolve = (kind: QuotaWindowKind) => {
+    const { windowMs, field } = quotaWindowConfig[kind];
+    const value = state[field];
+    if (activeCycleStartMs(value, windowMs, now) !== null) return value;
+    if (value) cleared[field] = null;
+    return null;
+  };
+
+  const fiveHourCycleStartAt = resolve('fiveHour');
+  const weeklyCycleStartAt = resolve('weekly');
+  if (Object.keys(cleared).length) setAccountQuotaCycleStart(userId, cleared);
+
+  return { fiveHourCycleStartAt, weeklyCycleStartAt };
+}
+
+export function getPlanQuotaCycleUsage(input: {
   whereSql: string;
   params: Record<string, string | number | null>;
+  cycleStartAt: string | null;
   windowMs: number;
   limit: number;
   now: number;
 }): QuotaWindowUsage {
-  const rows = db
-    .prepare(
-      `
-      SELECT created_at, total_cost_cents, total_tokens
-      FROM usage_logs
-      WHERE ${input.whereSql}
-        AND created_at >= @quotaWindowScanSince
-        AND created_at <= @quotaWindowNow
-        AND status_code BETWEEN 200 AND 299
-        AND COALESCE(usage_source, 'plan') = 'plan'
-        AND ${planQuotaConsumptionFilter()}
-      ORDER BY created_at ASC
-    `
-    )
-    .all({
-      ...input.params,
-      // A recent request can still belong to a cycle that started almost one full window earlier.
-      quotaWindowScanSince: new Date(input.now - input.windowMs * 2).toISOString(),
-      quotaWindowNow: new Date(input.now).toISOString()
-    }) as QuotaWindowRow[];
-
-  return activeQuotaWindowUsage(rows, input.windowMs, input.limit, input.now);
-}
-
-function activeQuotaWindowUsage(rows: QuotaWindowRow[], windowMs: number, limit: number, now: number): QuotaWindowUsage {
-  let cycleStartAt: string | null = null;
-  let cycleStartMs = NaN;
-  let costCents = 0;
-  let tokens = 0;
-
-  for (const row of rows) {
-    const createdMs = Date.parse(row.created_at);
-    if (!Number.isFinite(createdMs) || createdMs > now) continue;
-
-    if (!Number.isFinite(cycleStartMs) || createdMs >= cycleStartMs + windowMs) {
-      cycleStartAt = row.created_at;
-      cycleStartMs = createdMs;
-      costCents = 0;
-      tokens = 0;
-    }
-
-    costCents += Math.max(0, Number(row.total_cost_cents ?? 0));
-    tokens += Math.max(0, Number(row.total_tokens ?? 0));
-  }
-
-  if (!Number.isFinite(cycleStartMs) || cycleStartMs + windowMs <= now) {
+  const cycleStartMs = activeCycleStartMs(input.cycleStartAt, input.windowMs, input.now);
+  if (cycleStartMs === null) {
     return {
       costCents: 0,
       tokens: 0,
-      resetAt: quotaResetAt(limit, 0, null, windowMs, now),
+      resetAt: quotaResetAt(input.limit, 0, null, input.windowMs, input.now),
       cycleStartAt: null
     };
   }
 
+  const totals = db
+    .prepare(
+      `
+      SELECT
+        COALESCE(SUM(total_cost_cents), 0) as total_cost_cents,
+        COALESCE(SUM(total_tokens), 0) as total_tokens
+      FROM usage_logs
+      WHERE ${input.whereSql}
+        AND created_at >= @quotaCycleStart
+        AND created_at <= @quotaCycleNow
+        AND status_code BETWEEN 200 AND 299
+        AND COALESCE(usage_source, 'plan') = 'plan'
+        AND ${planQuotaConsumptionFilter()}
+    `
+    )
+    .get({
+      ...input.params,
+      quotaCycleStart: new Date(cycleStartMs).toISOString(),
+      quotaCycleNow: new Date(input.now).toISOString()
+    }) as { total_cost_cents: number; total_tokens: number };
+
   return {
-    costCents,
-    tokens,
-    resetAt: quotaResetAt(limit, costCents, cycleStartAt, windowMs, now),
-    cycleStartAt
+    costCents: Math.max(0, Number(totals.total_cost_cents ?? 0)),
+    tokens: Math.max(0, Number(totals.total_tokens ?? 0)),
+    resetAt: input.limit > 0 ? new Date(cycleStartMs + input.windowMs).toISOString() : '',
+    cycleStartAt: new Date(cycleStartMs).toISOString()
   };
 }
 
@@ -230,18 +242,21 @@ export function getQuotaSnapshot(apiKeyId: string): QuotaSnapshot {
   }
 
   const now = Date.now();
+  const cycles = getAccountQuotaCycles(scope.userId!, now);
   const quotaWhereSql = quotaScopeKeyFilter(scope);
   const quotaParams = { userId: scope.userId };
-  const fiveHourUsage = getPlanQuotaWindowUsage({
+  const fiveHourUsage = getPlanQuotaCycleUsage({
     whereSql: quotaWhereSql,
     params: quotaParams,
+    cycleStartAt: cycles.fiveHourCycleStartAt,
     windowMs: fiveHoursMs,
     limit: scope.fiveHourLimit,
     now
   });
-  const weeklyUsage = getPlanQuotaWindowUsage({
+  const weeklyUsage = getPlanQuotaCycleUsage({
     whereSql: quotaWhereSql,
     params: quotaParams,
+    cycleStartAt: cycles.weeklyCycleStartAt,
     windowMs: sevenDaysMs,
     limit: scope.weeklyLimit,
     now
@@ -391,13 +406,14 @@ export function createUsageLog(
 
   invalidateUsageSummaryCacheForApiKey(log.apiKeyId);
 
-  if (
-    log.apiKeyId &&
-    log.usageSource === 'balance' &&
-    log.statusCode >= 200 &&
-    log.statusCode <= 299 &&
-    log.totalCostCents > 0
-  ) {
+  const isSuccessfulPaidUsage =
+    Boolean(log.apiKeyId) && log.statusCode >= 200 && log.statusCode <= 299 && log.totalCostCents > 0;
+
+  if (isSuccessfulPaidUsage && log.usageSource === 'plan') {
+    openQuotaCyclesForApiKey(log.apiKeyId!, log.createdAt);
+  }
+
+  if (isSuccessfulPaidUsage && log.usageSource === 'balance') {
     db.prepare(
       `
       UPDATE account_state
@@ -414,6 +430,24 @@ export function createUsageLog(
 
   pruneUsageLogsIfDue();
   return id;
+}
+
+// First successful plan consumption while no cycle is active anchors the
+// cycle to that consumption's timestamp.
+function openQuotaCyclesForApiKey(apiKeyId: string, consumedAt: string) {
+  const row = db.prepare('SELECT user_id FROM api_keys WHERE id = ?').get(apiKeyId) as
+    | { user_id: string | null }
+    | undefined;
+  if (!row?.user_id) return;
+
+  const consumedMs = Date.parse(consumedAt);
+  const anchorMs = Number.isFinite(consumedMs) ? consumedMs : Date.now();
+  const cycles = getAccountQuotaCycles(row.user_id, anchorMs);
+
+  const updates: Partial<{ fiveHourCycleStartAt: string; weeklyCycleStartAt: string }> = {};
+  if (!cycles.fiveHourCycleStartAt) updates.fiveHourCycleStartAt = new Date(anchorMs).toISOString();
+  if (!cycles.weeklyCycleStartAt) updates.weeklyCycleStartAt = new Date(anchorMs).toISOString();
+  if (Object.keys(updates).length) setAccountQuotaCycleStart(row.user_id, updates);
 }
 
 export function listUsageLogs(input: UsageLogQuery = {}) {
@@ -616,17 +650,20 @@ function buildUsageSummaryForUser(userId: string) {
     : undefined;
   const accountFiveHourLimit = Number(accountPlan?.five_hour_token_limit ?? 0);
   const accountWeeklyLimit = Number(accountPlan?.weekly_token_limit ?? 0);
+  const cycles = getAccountQuotaCycles(userId, now, account);
   const quotaWhereSql = 'api_key_id IN (SELECT id FROM api_keys WHERE user_id = @userId)';
-  const fiveHourUsage = getPlanQuotaWindowUsage({
+  const fiveHourUsage = getPlanQuotaCycleUsage({
     whereSql: quotaWhereSql,
     params: userParams,
+    cycleStartAt: cycles.fiveHourCycleStartAt,
     windowMs: fiveHoursMs,
     limit: accountFiveHourLimit,
     now
   });
-  const weeklyUsage = getPlanQuotaWindowUsage({
+  const weeklyUsage = getPlanQuotaCycleUsage({
     whereSql: quotaWhereSql,
     params: userParams,
+    cycleStartAt: cycles.weeklyCycleStartAt,
     windowMs: sevenDaysMs,
     limit: accountWeeklyLimit,
     now

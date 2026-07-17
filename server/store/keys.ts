@@ -3,7 +3,7 @@ import { db, mapKey, mapPlan, nowIso } from '../db.js';
 import { createApiKey, decryptKey, encryptKey, hashKey, previewKey } from '../crypto.js';
 import type { ApiKeyRecord, KeyListItem, KeyWithPlan, Plan, UserStatus } from '../types.js';
 import { ensureAccountState } from './accounts.js';
-import { getPlanQuotaWindowUsage, getQuotaSnapshot } from './usage.js';
+import { getAccountQuotaCycles, getPlanQuotaCycleUsage, getQuotaSnapshot } from './usage.js';
 
 const makeId = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 16);
 const lastUsedTouchIntervalMs = 60 * 1000;
@@ -21,16 +21,24 @@ function normalizeKeyUserStatus(status: unknown): UserStatus {
 function getKeyUsageSnapshot(apiKeyId: string) {
   const accountQuota = getQuotaSnapshot(apiKeyId);
   const now = Date.now();
-  const fiveHourUsage = getPlanQuotaWindowUsage({
+  const owner = db.prepare('SELECT user_id FROM api_keys WHERE id = ?').get(apiKeyId) as
+    | { user_id: string | null }
+    | undefined;
+  const cycles = owner?.user_id
+    ? getAccountQuotaCycles(owner.user_id, now)
+    : { fiveHourCycleStartAt: null, weeklyCycleStartAt: null };
+  const fiveHourUsage = getPlanQuotaCycleUsage({
     whereSql: 'api_key_id = @apiKeyId',
     params: { apiKeyId },
+    cycleStartAt: cycles.fiveHourCycleStartAt,
     windowMs: 5 * 60 * 60 * 1000,
     limit: accountQuota.fiveHourLimit,
     now
   });
-  const weeklyUsage = getPlanQuotaWindowUsage({
+  const weeklyUsage = getPlanQuotaCycleUsage({
     whereSql: 'api_key_id = @apiKeyId',
     params: { apiKeyId },
+    cycleStartAt: cycles.weeklyCycleStartAt,
     windowMs: 7 * 24 * 60 * 60 * 1000,
     limit: accountQuota.weeklyLimit,
     now

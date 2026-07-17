@@ -6,6 +6,8 @@ export type AccountState = {
   currentPlanName: string | null;
   currentPlanRank: number;
   planExpiresAt: string | null;
+  fiveHourCycleStartAt: string | null;
+  weeklyCycleStartAt: string | null;
 };
 
 export function ensureAccountState(userId: string): AccountState {
@@ -16,7 +18,9 @@ export function ensureAccountState(userId: string): AccountState {
       currentPlanId: existing.current_plan_id,
       currentPlanName: existing.current_plan_name,
       currentPlanRank: existing.current_plan_rank,
-      planExpiresAt: existing.plan_expires_at
+      planExpiresAt: existing.plan_expires_at,
+      fiveHourCycleStartAt: existing.five_hour_cycle_start_at ?? null,
+      weeklyCycleStartAt: existing.weekly_cycle_start_at ?? null
     };
     return normalizeAccountState(userId, state);
   }
@@ -47,8 +51,36 @@ export function ensureAccountState(userId: string): AccountState {
     currentPlanId: 'free',
     currentPlanName: 'Free',
     currentPlanRank: 0,
-    planExpiresAt: null
+    planExpiresAt: null,
+    fiveHourCycleStartAt: null,
+    weeklyCycleStartAt: null
   };
+}
+
+export function setAccountQuotaCycleStart(
+  userId: string,
+  input: Partial<{ fiveHourCycleStartAt: string | null; weeklyCycleStartAt: string | null }>
+) {
+  const assignments: string[] = [];
+  const params: Record<string, string | null> = { id: userId, updatedAt: nowIso() };
+  if ('fiveHourCycleStartAt' in input) {
+    assignments.push('five_hour_cycle_start_at = @fiveHourCycleStartAt');
+    params.fiveHourCycleStartAt = input.fiveHourCycleStartAt ?? null;
+  }
+  if ('weeklyCycleStartAt' in input) {
+    assignments.push('weekly_cycle_start_at = @weeklyCycleStartAt');
+    params.weeklyCycleStartAt = input.weeklyCycleStartAt ?? null;
+  }
+  if (!assignments.length) return;
+
+  db.prepare(
+    `
+    UPDATE account_state
+    SET ${assignments.join(', ')},
+        updated_at = @updatedAt
+    WHERE id = @id
+  `
+  ).run(params);
 }
 
 function normalizeAccountState(userId: string, state: AccountState): AccountState {
